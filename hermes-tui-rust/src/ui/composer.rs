@@ -4,9 +4,9 @@
 
 use ratatui::{
     layout::{Position, Rect},
-    style::{Style, Stylize},
+    style::{Color, Style, Stylize},
     text::{Line, Span, Text},
-    widgets::{Block, BorderType, Borders, Padding, Paragraph},
+    widgets::{Block, BorderType, Borders, Paragraph},
     Frame,
 };
 
@@ -50,7 +50,7 @@ impl InputComposer {
             cursor_pos: 0,
             input_mode: InputMode::Normal,
             colors,
-            prompt: ">> ".to_string(),
+            prompt: " ≡ ".to_string(),
             active: true,
             history: Vec::new(),
             history_index: -1,
@@ -85,9 +85,9 @@ impl InputComposer {
     /// Update the prompt based on mode
     fn update_prompt(&mut self) {
         match self.input_mode {
-            InputMode::Normal => self.prompt = ">> ".to_string(),
-            InputMode::Insert => self.prompt = ": ".to_string(),
-            InputMode::Command => self.prompt = "/ ".to_string(),
+            InputMode::Normal => self.prompt = " ≡ ".to_string(),
+            InputMode::Insert => self.prompt = " ≡ ".to_string(),
+            InputMode::Command => self.prompt = " / ".to_string(),
         }
     }
 
@@ -292,64 +292,120 @@ impl InputComposer {
     }
 
     /// Render the composer
+    /// Render the composer without a surrounding block (for the clean Kraken footer)
+    pub fn render_clean(&self, frame: &mut Frame, area: Rect) {
+        let mut lines = Vec::new();
+
+        // Welcome message (if input is empty)
+        if self.input.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "Welcome to Kraken Agent! Type your message or /help for commands.",
+                Style::new().fg(Color::Rgb(248, 248, 242)),
+            )));
+            lines.push(Line::from(vec![
+                Span::styled("* ", Style::new().fg(Color::Rgb(166, 226, 46))),
+                Span::styled("Tip: ", Style::new().fg(Color::Rgb(248, 248, 242)).bold()),
+                Span::styled("hermes chat --max-turns 200 overrides the default 90-iteration limit per turn.", Style::new().fg(Color::Rgb(117, 113, 94)).italic()),
+            ]));
+        }
+
+        // Prompt and input
+        let prompt_span = Span::styled(&self.prompt, Style::new().fg(Color::Rgb(248, 248, 242)).bold());
+        
+        let input_line = if self.input.is_empty() {
+            Line::from(vec![prompt_span])
+        } else {
+            let mut spans = vec![prompt_span];
+            spans.push(Span::raw(&self.input));
+            Line::from(spans)
+        };
+        lines.push(input_line);
+
+        let line_count = lines.len();
+        let paragraph = Paragraph::new(Text::from(lines))
+            .wrap(ratatui::widgets::Wrap { trim: false });
+
+        frame.render_widget(paragraph, area);
+
+        // Set cursor position
+        if self.active {
+            let prompt_len = self.prompt.chars().count();
+            let cursor_x = area.x + (prompt_len + self.cursor_pos) as u16;
+            // The cursor should be on the last line (the input line)
+            let cursor_y = area.y + (line_count as u16).saturating_sub(1);
+
+            if cursor_x < area.x + area.width {
+                frame.set_cursor_position(Position::new(cursor_x, cursor_y));
+            }
+        }
+    }
+
     pub fn render(&self, frame: &mut Frame, area: Rect) {
         let border_style = if self.active {
             Style::new().fg(self.colors.border)
         } else {
             Style::new().fg(self.colors.border).dim()
         };
-        
+
         let block = Block::default()
             .title(" Input ".bold())
             .borders(Borders::ALL)
-            .border_type(BorderType::Rounded)
+            .border_type(BorderType::Thick)
             .border_style(border_style);
 
         let inner_area = block.inner(area);
         frame.render_widget(block, area);
 
         // Build display text
-        let mut display_text = String::new();
-        display_text.push_str(&self.prompt);
-        
+        let mut lines = Vec::new();
+        let prompt_span = Span::styled(&self.prompt, Style::new().fg(Color::Rgb(102, 217, 239)).bold()); // #66D9EF Cyan
+
         if self.input.is_empty() {
             // Show placeholder
             let placeholder = match self.input_mode {
-                InputMode::Normal => "Type your message...",
+                InputMode::Normal => "Type your message or /help...",
                 InputMode::Insert => "Insert text...",
-                InputMode::Command => "Enter command (e.g., /help)...",
+                InputMode::Command => "Enter command...",
             };
-            display_text.push_str(placeholder);
+            lines.push(Line::from(vec![
+                prompt_span,
+                Span::styled(placeholder, Style::new().fg(Color::Rgb(117, 113, 94)).italic()), // #75715E Gray
+            ]));
         } else {
-            display_text.push_str(&self.input);
+            // Split input into lines and prepend prompt to first line
+            let input_lines: Vec<&str> = self.input.lines().collect();
+            if input_lines.is_empty() {
+                lines.push(Line::from(vec![prompt_span]));
+            } else {
+                for (i, line) in input_lines.iter().enumerate() {
+                    if i == 0 {
+                        lines.push(Line::from(vec![prompt_span.clone(), Span::raw(*line)]));
+                    } else {
+                        // Indent subsequent lines by prompt length
+                        let indent = " ".repeat(self.prompt.chars().count());
+                        lines.push(Line::from(vec![Span::raw(indent), Span::raw(*line)]));
+                    }
+                }
+            }
         }
 
         // Create paragraph
-        let paragraph = Paragraph::new(Text::from(Line::from(Span::raw(&display_text))))
+        let paragraph = Paragraph::new(Text::from(lines))
             .style(Style::new().fg(self.colors.code_text))
-            .block(Block::new().padding(Padding::new(0, 0, 0, 0)));
-        
+            .wrap(ratatui::widgets::Wrap { trim: false });
+
         frame.render_widget(paragraph, inner_area);
 
         // Set cursor position
         if self.active {
-            let prompt_len = self.prompt.len();
-            let display_len = if self.input.is_empty() {
-                // Placeholder length
-                let placeholder = match self.input_mode {
-                    InputMode::Normal => "Type your message...".len(),
-                    InputMode::Insert => "Insert text...".len(),
-                    InputMode::Command => "Enter command (e.g., /help)...".len(),
-                };
-                prompt_len + placeholder
-            } else {
-                prompt_len + self.cursor_pos
-            };
-            
-            let cursor_x = inner_area.x + display_len as u16;
+            // Basic cursor positioning for now (needs improvement for multi-line)
+            let prompt_len = self.prompt.chars().count();
+            let cursor_x = inner_area.x + (prompt_len + self.cursor_pos) as u16;
             let cursor_y = inner_area.y;
-            
-            frame.set_cursor_position(Position::new(cursor_x, cursor_y));
+
+            if cursor_x < inner_area.x + inner_area.width {
+                frame.set_cursor_position(Position::new(cursor_x, cursor_y));
+            }
         }
     }
 }

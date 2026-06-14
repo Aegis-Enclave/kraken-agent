@@ -135,3 +135,76 @@ impl CompletionPopup {
         frame.render_widget(list, popup_area);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_colors() -> ChatColorsRgb {
+        ChatColorsRgb {
+            user_bg: Color::Reset,
+            user_text: Color::Reset,
+            assistant_bg: Color::Reset,
+            assistant_text: Color::Reset,
+            system_bg: Color::Reset,
+            system_text: Color::Reset,
+            tool_bg: Color::Reset,
+            tool_text: Color::Reset,
+            code_bg: Color::Reset,
+            code_text: Color::Reset,
+            border: Color::Reset,
+            timestamp: Color::Reset,
+        }
+    }
+
+    #[test]
+    fn test_completion_popup_visibility() {
+        let mut popup = CompletionPopup::new(create_test_colors());
+        assert!(!popup.is_visible());
+
+        let items = vec![
+            CompletionItem {
+                display: "help".to_string(),
+                text: "/help".to_string(),
+                meta: Some("Show help".to_string()),
+            },
+        ];
+
+        popup.show(items);
+        assert!(popup.is_visible());
+
+        popup.hide();
+        assert!(!popup.is_visible());
+    }
+
+    #[test]
+    fn test_completion_popup_navigation() {
+        let mut popup = CompletionPopup::new(create_test_colors());
+        let items = vec![
+            CompletionItem {
+                display: "help".to_string(),
+                text: "/help".to_string(),
+                meta: None,
+            },
+            CompletionItem {
+                display: "quit".to_string(),
+                text: "/quit".to_string(),
+                meta: None,
+            },
+        ];
+
+        popup.show(items);
+        assert_eq!(popup.selected_index, 0);
+        assert_eq!(popup.selected_item().unwrap().display, "help");
+
+        popup.select_next();
+        assert_eq!(popup.selected_index, 1);
+        assert_eq!(popup.selected_item().unwrap().display, "quit");
+
+        popup.select_next();
+        assert_eq!(popup.selected_index, 0);
+
+        popup.select_prev();
+        assert_eq!(popup.selected_index, 1);
+    }
+}

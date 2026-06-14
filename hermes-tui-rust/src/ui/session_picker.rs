@@ -163,3 +163,85 @@ impl SessionPicker {
         frame.render_widget(list, popup_area);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn create_test_colors() -> ChatColorsRgb {
+        ChatColorsRgb {
+            user_bg: Color::Reset,
+            user_text: Color::Reset,
+            assistant_bg: Color::Reset,
+            assistant_text: Color::Reset,
+            system_bg: Color::Reset,
+            system_text: Color::Reset,
+            tool_bg: Color::Reset,
+            tool_text: Color::Reset,
+            code_bg: Color::Reset,
+            code_text: Color::Reset,
+            border: Color::Reset,
+            timestamp: Color::Reset,
+        }
+    }
+
+    #[test]
+    fn test_session_picker_visibility() {
+        let mut picker = SessionPicker::new(create_test_colors());
+        assert!(!picker.is_visible());
+
+        let sessions = vec![
+            SessionListItem {
+                id: "session_1".to_string(),
+                title: "Rust coding".to_string(),
+                message_count: 5,
+                preview: "Implementing key routines...".to_string(),
+                started_at: 1_718_000_000,
+                source: Some("cli".to_string()),
+            },
+        ];
+
+        picker.show(sessions);
+        assert!(picker.is_visible());
+
+        picker.hide();
+        assert!(!picker.is_visible());
+    }
+
+    #[test]
+    fn test_session_picker_navigation() {
+        let mut picker = SessionPicker::new(create_test_colors());
+        let sessions = vec![
+            SessionListItem {
+                id: "session_1".to_string(),
+                title: "Rust coding".to_string(),
+                message_count: 5,
+                preview: "Implementing key routines...".to_string(),
+                started_at: 1_718_000_000,
+                source: Some("cli".to_string()),
+            },
+            SessionListItem {
+                id: "session_2".to_string(),
+                title: "Python gateway".to_string(),
+                message_count: 10,
+                preview: "Refactoring server code...".to_string(),
+                started_at: 1_718_000_100,
+                source: Some("cli".to_string()),
+            },
+        ];
+
+        picker.show(sessions);
+        assert_eq!(picker.selected_index, 0);
+        assert_eq!(picker.selected_session().unwrap().title, "Rust coding");
+
+        picker.select_next();
+        assert_eq!(picker.selected_index, 1);
+        assert_eq!(picker.selected_session().unwrap().title, "Python gateway");
+
+        picker.select_next();
+        assert_eq!(picker.selected_index, 0);
+
+        picker.select_prev();
+        assert_eq!(picker.selected_index, 1);
+    }
+}

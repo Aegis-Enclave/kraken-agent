@@ -4,10 +4,10 @@
 //! like the current model, session, input mode, etc.
 
 use ratatui::{
-    layout::{Alignment, Rect},
-    style::Style,
-    text::{Line, Span, Text},
-    widgets::{Block, BorderType, Borders, Padding, Paragraph},
+    layout::Rect,
+    style::{Color, Style, Stylize},
+    text::{Line, Span},
+    widgets::{Block, Paragraph},
     Frame,
 };
 
@@ -55,6 +55,12 @@ pub struct Toolbar {
     chat_colors: ChatColorsRgb,
     /// Current input mode
     input_mode: InputMode,
+    /// Whether the gateway is thinking
+    is_thinking: bool,
+    /// Current spinner index
+    spinner_idx: usize,
+    /// Current thinking verb index
+    verb_idx: usize,
 }
 
 impl Toolbar {
@@ -65,6 +71,9 @@ impl Toolbar {
             theme_colors,
             chat_colors,
             input_mode: InputMode::Normal,
+            is_thinking: false,
+            spinner_idx: 0,
+            verb_idx: 0,
         }
     }
 
@@ -138,10 +147,22 @@ impl Toolbar {
         self.input_mode
     }
 
+    /// Update thinking status and increment spinner
+    pub fn tick(&mut self, is_thinking: bool) {
+        self.is_thinking = is_thinking;
+        if is_thinking {
+            self.spinner_idx = self.spinner_idx.wrapping_add(1);
+            // Change verb every 20 ticks
+            if self.spinner_idx % 20 == 0 {
+                self.verb_idx = self.verb_idx.wrapping_add(1);
+            }
+        }
+    }
+
     /// Update the status based on connection state and current mode
     pub fn update_status(&mut self, connected: bool, model: Option<&str>, session: Option<&str>) {
         self.items.clear();
-        
+
         // Add connection status
         if connected {
             self.add_text(
@@ -183,33 +204,85 @@ impl Toolbar {
         );
     }
 
-    /// Render the toolbar
+    /// Render the toolbar with Powerline-style segments
     pub fn render(&self, frame: &mut Frame, area: Rect) {
-        // Create a block for the toolbar
-        let block = Block::default()
-            .borders(Borders::TOP)
-            .border_type(BorderType::Plain)
-            .border_style(Style::new().fg(self.chat_colors.border));
-
-        // Inner area
-        let inner_area = block.inner(area);
-        
-        // Render the block
-        frame.render_widget(block, area);
-
-        // Build the text line
-        let mut spans = Vec::new();
-        for item in &self.items {
-            spans.push(Span::styled(item.text.clone(), item.style));
+        if area.height == 0 {
+            return;
         }
-        
-        // Create paragraph with all spans
-        let paragraph = Paragraph::new(Text::from(Line::from(spans)))
-            .style(Style::new().fg(self.theme_colors.text))
-            .alignment(Alignment::Left)
-            .block(Block::new().padding(Padding::horizontal(1)));
-        
-        frame.render_widget(paragraph, inner_area);
+
+        // Colors
+        let bg_main = Color::Rgb(27, 29, 30);   // #1B1D1E
+        let bg_seg1 = Color::Rgb(117, 113, 94); // #75715E (Dev)
+        let bg_seg2 = Color::Rgb(73, 72, 62);   // #49483E (Status)
+        let fg_text = Color::Rgb(248, 248, 242); // #F8F8F2
+
+        // Background
+        frame.render_widget(Block::default().style(Style::default().bg(bg_main)), area);
+
+        let mut left_spans = Vec::new();
+
+        // 1. Env Segment
+        left_spans.push(Span::styled(" Dev ", Style::default().bg(bg_seg1).fg(bg_main).bold()));
+        left_spans.push(Span::styled("", Style::default().fg(bg_seg1).bg(bg_seg2)));
+
+        // 2. Connection Status
+        let (status_icon, status_color) = if self.items.iter().any(|i| i.text.contains("●")) {
+            (" ● ", Color::Rgb(166, 226, 46))
+        } else {
+            (" ○ ", Color::Rgb(249, 38, 114))
+        };
+        left_spans.push(Span::styled(status_icon, Style::default().bg(bg_seg2).fg(status_color).bold()));
+        left_spans.push(Span::styled("", Style::default().fg(bg_seg2).bg(bg_main)));
+
+        // 3. Thinking Indicator (if active)
+        if self.is_thinking {
+            let faces = ["(≡)", "(≌)", "(‿)", "(◈)", "(Ψ)", "(🦑)"];
+            let verbs = [
+                "stirring the abyss", "unfurling tentacles", "charting deep currents",
+                "inking the void", "tangling with the unknown", "sounding the trench",
+                "coiling for strike", "reading pressure ridges", "glowing in the dark",
+                "shedding a bioluminescent tear", "befriending a gulper eel",
+                "counting jellyfish", "spiraling downward", "mapping the sea floor",
+                "teasing the leviathan", "whispering to barnacles",
+            ];
+            let face = faces[self.spinner_idx % faces.len()];
+            let verb = verbs[self.verb_idx % verbs.len()];
+            
+            left_spans.push(Span::styled(format!(" {} {}... ", face, verb), Style::default().fg(Color::Rgb(166, 226, 46)).bg(bg_main).bold().italic()));
+            left_spans.push(Span::styled("", Style::default().fg(bg_seg2)));
+        }
+
+        // 4. Model/Session Info
+        for item in &self.items {
+            let text = item.text.trim();
+            if text.contains("●") || text.contains("○") || text.is_empty() {
+                continue;
+            }
+            left_spans.push(Span::styled(format!(" {} ", text), Style::default().fg(fg_text).bg(bg_main)));
+            left_spans.push(Span::styled(" ", Style::default().fg(bg_seg2)));
+        }
+
+        // Right Info
+        let clock = chrono::Local::now().format("%H:%M").to_string();
+        let right_text = format!("  100%  {} ", clock);
+        let right_span = Span::styled(right_text, Style::default().fg(bg_seg1).bg(bg_main));
+
+        let left_line = Line::from(left_spans);
+        let left_width = left_line.width();
+        let right_width = right_span.width();
+
+        let mut final_spans = left_line.spans;
+        if area.width > (left_width + right_width) as u16 {
+            let padding = " ".repeat(area.width as usize - left_width - right_width);
+            final_spans.push(Span::raw(padding));
+            final_spans.push(right_span);
+        } else if area.width > left_width as u16 {
+            // Squeeze padding
+            let padding = " ".repeat(area.width.saturating_sub(left_width as u16) as usize);
+            final_spans.push(Span::raw(padding));
+        }
+
+        frame.render_widget(Paragraph::new(Line::from(final_spans)).style(Style::default().bg(bg_main)), area);
     }
 }
 
