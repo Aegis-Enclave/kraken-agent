@@ -188,7 +188,8 @@ pub struct SessionListResponse {
 /// Message delta (streaming)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MessageDelta {
-    pub session_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub role: Option<MessageRole>,
     pub delta: String,
@@ -199,7 +200,8 @@ pub struct MessageDelta {
 /// Message complete
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MessageComplete {
-    pub session_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
     pub role: MessageRole,
     pub content: String,
 }
@@ -211,7 +213,8 @@ pub struct MessageComplete {
 /// Tool start notification
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolStart {
-    pub session_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
     pub tool_name: String,
     pub call_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -221,7 +224,8 @@ pub struct ToolStart {
 /// Tool progress update
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolProgress {
-    pub session_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
     pub call_id: String,
     pub output: String,
 }
@@ -229,7 +233,8 @@ pub struct ToolProgress {
 /// Tool complete
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ToolComplete {
-    pub session_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
     pub call_id: String,
     pub result: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -245,7 +250,8 @@ pub struct ToolComplete {
 /// Approval request
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApprovalRequest {
-    pub session_key: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_id: Option<String>,
     pub request_id: String,
     pub tool_name: String,
     pub arguments: HashMap<String, serde_json::Value>,
@@ -390,6 +396,9 @@ pub enum GatewayMessageData {
     SessionActivate(SessionActivateResponse),
     #[serde(rename = "session.inflight")]
     SessionInflight(SessionInflightResponse),
+
+    #[serde(rename = "session.info")]
+    SessionInfo(serde_json::Value),
 
     // Messages
     #[serde(rename = "message.delta")]

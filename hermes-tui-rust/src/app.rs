@@ -20,7 +20,7 @@ use crate::ui::subagent::SubagentList;
 
 use crate::protocol::client::GatewayClient;
 use crate::protocol::types::*;
-use crate::state::{config::TuiConfig, messages::{Message, MessageHistory}, session::SessionManager};
+use crate::state::{config::TuiConfig, messages::{Message, MessageHistory}, session::{Session, SessionManager}};
 use crate::state::config::InputMode;
 use crate::ui::{chat::ChatComponent, composer::InputComposer, toolbar::Toolbar};
 use crate::ui::prompts::PromptManager;
@@ -921,7 +921,10 @@ impl App {
             GatewayMessage::SessionInflight(response) => {
                 self.handle_session_inflight(response)?;
             }
-            
+            GatewayMessage::SessionInfo(info) => {
+                self.handle_session_info(info)?;
+            }
+
             // Messages
             GatewayMessage::MessageDelta(delta) => {
                 self.handle_message_delta(delta)?;
@@ -1118,11 +1121,12 @@ impl App {
     
     /// Handle message delta (streaming)
     fn handle_message_delta(&mut self, delta: MessageDelta) -> Result<()> {
-        debug!("Message delta: role={:?}, delta='{}', done={:?}", 
+        debug!("Message delta: role={:?}, delta='{}', done={:?}",
             delta.role, delta.delta, delta.done);
-        
+
         // Get or create a streaming message
-        let message_id = format!("{}:streaming", delta.session_key);
+        let session_id = delta.session_id.clone().unwrap_or_default();
+        let message_id = format!("{}:streaming", session_id);
         
         // Check if we have an existing streaming message for this session
         if let Some(last_msg) = self.messages().last() {
@@ -1171,6 +1175,26 @@ impl App {
         // Auto-scroll to bottom on new message
         self.chat_component_mut().scroll_to_bottom();
         
+        Ok(())
+    }
+
+    /// Handle session info message
+    fn handle_session_info(&mut self, info_val: serde_json::Value) -> Result<()> {
+        if let Ok(info) = serde_json::from_value::<SessionInfo>(info_val) {
+            if let Some(id) = &info.id {
+                info!("Session info received: {}", id);
+                self.sessions_mut().set_current_session(id.clone());
+                
+                // If it's a new session we didn't know about, add it
+                if self.sessions().get_session(id).is_none() {
+                    let mut session = Session::new(id.clone());
+                    if let Some(title) = &info.title {
+                        session.name = Some(title.clone());
+                    }
+                    self.sessions_mut().add_session(session);
+                }
+            }
+        }
         Ok(())
     }
     
