@@ -946,6 +946,12 @@ impl App {
             GatewayMessage::NoticeClear(notice) => {
                 debug!("Notice clear: {:?}", notice);
             }
+            GatewayMessage::NotificationShow(notice) => {
+                debug!("Notification show: {:?}", notice);
+            }
+            GatewayMessage::NotificationClear(notice) => {
+                debug!("Notification clear: {:?}", notice);
+            }
             GatewayMessage::PreviewRestartProgress(progress) => {
                 debug!("Preview restart progress: {:?}", progress);
             }
@@ -963,6 +969,12 @@ impl App {
             }
             GatewayMessage::SkinChanged(skin) => {
                 debug!("Skin changed: {:?}", skin);
+            }
+            GatewayMessage::BackgroundComplete(complete) => {
+                debug!("Background complete: {:?}", complete);
+            }
+            GatewayMessage::ReviewSummary(summary) => {
+                debug!("Review summary: {:?}", summary);
             }
 
             // Messages
@@ -982,6 +994,9 @@ impl App {
             }
             GatewayMessage::ToolComplete(tool_complete) => {
                 self.handle_tool_complete(tool_complete)?;
+            }
+            GatewayMessage::ToolGenerating(generating) => {
+                debug!("Tool generating: {:?}", generating);
             }
             
             // Approvals
@@ -1073,14 +1088,24 @@ impl App {
     fn handle_session_create(&mut self, response: SessionCreateResponse) -> Result<()> {
         info!("Session created: {}", response.session_id);
         
+        // Add session to local store if it doesn't exist yet
+        let session_id = response.session_id.clone();
+        if self.sessions().get_session(&session_id).is_none() {
+            let mut session = Session::new(session_id.clone());
+            if let Some(ref info) = response.info {
+                if let Some(ref title) = info.title {
+                    session.name = Some(title.clone());
+                }
+            }
+            self.sessions_mut().add_session(session);
+        }
+        
         // Set the new session as current
-        self.sessions_mut().set_current_session(response.session_id.clone());
+        self.sessions_mut().set_current_session(session_id);
         
         // Clear message history for new session
         self.messages_mut().clear();
         self.chat_component_mut().clear_messages();
-        
-        // TODO: Show notification to user
         
         Ok(())
     }
@@ -1089,8 +1114,14 @@ impl App {
     fn handle_session_resume(&mut self, response: SessionResumeResponse) -> Result<()> {
         info!("Session resumed: {}", response.session_id);
         
+        // Ensure session exists in local store
+        let session_id = response.session_id.clone();
+        if self.sessions().get_session(&session_id).is_none() {
+            self.sessions_mut().add_session(Session::new(session_id.clone()));
+        }
+        
         // Set the resumed session as current
-        self.sessions_mut().set_current_session(response.session_id.clone());
+        self.sessions_mut().set_current_session(session_id);
         
         // Clear existing messages
         self.messages_mut().clear();
@@ -1127,15 +1158,16 @@ impl App {
         Ok(())
     }
     
-    /// Handle session activate response
     fn handle_session_activate(&mut self, response: SessionActivateResponse) -> Result<()> {
         info!("Session activated: {}", response.session_id);
         
-        self.sessions_mut().set_current_session(response.session_id.clone());
+        // Ensure session exists in local store
+        let session_id = response.session_id.clone();
+        if self.sessions().get_session(&session_id).is_none() {
+            self.sessions_mut().add_session(Session::new(session_id.clone()));
+        }
         
-        // Clear existing messages
-        self.messages_mut().clear();
-        self.chat_component_mut().clear_messages();
+        self.sessions_mut().set_current_session(session_id);
         
         // Add activated messages to chat
         if let Some(messages) = response.messages {
@@ -1220,20 +1252,16 @@ impl App {
 
     /// Handle session info message
     fn handle_session_info(&mut self, info_val: serde_json::Value) -> Result<()> {
-        if let Ok(info) = serde_json::from_value::<SessionInfo>(info_val) {
-            if let Some(id) = &info.id {
-                info!("Session info received: {}", id);
-                self.sessions_mut().set_current_session(id.clone());
-                
-                // If it's a new session we didn't know about, add it
-                if self.sessions().get_session(id).is_none() {
-                    let mut session = Session::new(id.clone());
-                    if let Some(title) = &info.title {
-                        session.name = Some(title.clone());
-                    }
-                    self.sessions_mut().add_session(session);
-                }
-            }
+        // The gateway sends session.info as a JSON-RPC notification with the
+        // session_id at the GatewayEvent level (stripped before dispatch) and
+        // model/provider/cwd/branch/running in the payload.
+        // We log it here; the session was already added to the local store
+        // via handle_session_create.
+        if let Some(model) = info_val.get("model").and_then(|v| v.as_str()) {
+            debug!("Session info: model={}", model);
+        }
+        if let Some(provider) = info_val.get("provider").and_then(|v| v.as_str()) {
+            debug!("Session info: provider={}", provider);
         }
         Ok(())
     }

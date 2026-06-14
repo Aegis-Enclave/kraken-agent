@@ -427,6 +427,11 @@ pub enum GatewayMessageData {
     #[serde(rename = "notice.clear")]
     NoticeClear(serde_json::Value),
 
+    #[serde(rename = "notification.show")]
+    NotificationShow(serde_json::Value),
+    #[serde(rename = "notification.clear")]
+    NotificationClear(serde_json::Value),
+
     // Tools
     #[serde(rename = "tool.start")]
     ToolStart(ToolStart),
@@ -434,6 +439,8 @@ pub enum GatewayMessageData {
     ToolProgress(ToolProgress),
     #[serde(rename = "tool.complete")]
     ToolComplete(ToolComplete),
+    #[serde(rename = "tool.generating")]
+    ToolGenerating(serde_json::Value),
 
     // Approvals
     #[serde(rename = "approval.request")]
@@ -472,6 +479,15 @@ pub enum GatewayMessageData {
     // Browser
     #[serde(rename = "browser.progress")]
     BrowserProgress(serde_json::Value),
+
+    // Background
+    #[serde(rename = "background.complete")]
+    BackgroundComplete(serde_json::Value),
+
+    // Review
+    #[serde(rename = "review.summary")]
+    ReviewSummary(serde_json::Value),
+
 
     // Skin
     #[serde(rename = "skin.changed")]
@@ -589,7 +605,7 @@ mod tests {
     #[test]
     fn test_message_delta_serialization() {
         let delta = MessageDelta {
-            session_key: "test-key".to_string(),
+            session_id: Some("test-key".to_string()),
             role: Some(MessageRole::Assistant),
             delta: "Hello".to_string(),
             done: Some(false),
@@ -598,7 +614,7 @@ mod tests {
         let serialized = serde_json::to_string(&delta).unwrap();
         let deserialized: MessageDelta = serde_json::from_str(&serialized).unwrap();
         
-        assert_eq!(deserialized.session_key, "test-key");
+        assert_eq!(deserialized.session_id, Some("test-key".to_string()));
         assert_eq!(deserialized.delta, "Hello");
     }
 
@@ -623,7 +639,7 @@ mod tests {
     #[test]
     fn test_tool_complete_serialization() {
         let tool = ToolComplete {
-            session_key: "test-key".to_string(),
+            session_id: Some("test-key".to_string()),
             call_id: "call-123".to_string(),
             result: "{\"success\": true}".to_string(),
             duration_ms: Some(150),
