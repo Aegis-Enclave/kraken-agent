@@ -7,9 +7,11 @@ use crate::protocol::transport::StdioTransport;
 use crate::protocol::types::{GatewayEvent, GatewayMessage, JsonRpcMessage, TuiRequest};
 use anyhow::{Context, Result};
 use log::{debug, error, trace, warn};
+use std::collections::HashMap;
 use std::fmt;
 use std::io::{Read, Write};
 use std::sync::mpsc::Receiver;
+use std::sync::{Arc, Mutex};
 
 /// Client for sending requests to the gateway
 pub struct GatewayClient {
@@ -19,6 +21,10 @@ pub struct GatewayClient {
     response_receiver: Option<Receiver<GatewayMessage>>,
     /// Whether the client is currently connected
     connected: bool,
+    /// Counter for request IDs
+    next_id: u64,
+    /// Map of pending request IDs to method names
+    pending_requests: Arc<Mutex<HashMap<u64, String>>>,
 }
 
 // Manual Debug impl because StdioTransport<Box<dyn Write + Send>> doesn't impl Debug
@@ -28,6 +34,7 @@ impl fmt::Debug for GatewayClient {
             .field("transport", &self.transport.as_ref().map(|_| "StdioTransport<_>"))
             .field("response_receiver", &self.response_receiver.as_ref().map(|_| "Receiver<_>"))
             .field("connected", &self.connected)
+            .field("next_id", &self.next_id)
             .finish()
     }
 }
@@ -38,6 +45,8 @@ impl GatewayClient {
             transport: None,
             response_receiver: None,
             connected: false,
+            next_id: 1,
+            pending_requests: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -67,6 +76,8 @@ impl GatewayClient {
         // Start reader thread — returns a receiver for raw JSON lines
         let line_receiver = transport.start_reader(stdin);
 
+        let pending_requests = Arc::clone(&self.pending_requests);
+
         // Spawn a parsing thread that converts JSON strings to GatewayMessages
         std::thread::spawn(move || {
             for line in line_receiver {
@@ -92,11 +103,34 @@ impl GatewayClient {
                             }
                         } 
                         // Handle responses to requests (result or error)
-                        else if rpc.id.is_some() {
-                            if let Some(result) = rpc.result {
-                                debug!("GatewayClient: Received response for ID {}: {:?}", rpc.id.unwrap(), result);
-                            } else if let Some(err) = rpc.error {
-                                error!("GatewayClient: Received error for ID {}: {}", rpc.id.unwrap(), err.message);
+                        else if let Some(id) = rpc.id {
+                            let method = {
+                                let mut pending = pending_requests.lock().unwrap();
+                                pending.remove(&id)
+                            };
+
+                            if let Some(method_name) = method {
+                                if let Some(result) = rpc.result {
+                                    debug!("GatewayClient: Received response for {} (ID {}): {:?}", method_name, id, result);
+                                    
+                                    // Transform the result into a GatewayMessageData variant if possible
+                                    // This allows the app to handle results as if they were events
+                                    let wrapped_msg = match method_name.as_str() {
+                                        "session.create" => serde_json::from_value(result).ok().map(GatewayMessage::SessionCreate),
+                                        "session.resume" => serde_json::from_value(result).ok().map(GatewayMessage::SessionResume),
+                                        "session.list" => serde_json::from_value(result).ok().map(GatewayMessage::SessionList),
+                                        "session.activate" => serde_json::from_value(result).ok().map(GatewayMessage::SessionActivate),
+                                        "prompt.submit" => serde_json::from_value(result).ok().map(GatewayMessage::PromptSubmit),
+                                        "config.get" => serde_json::from_value(result).ok().map(GatewayMessage::ConfigGet),
+                                        _ => None,
+                                    };
+
+                                    if let Some(msg) = wrapped_msg {
+                                        let _ = response_sender.send(msg);
+                                    }
+                                } else if let Some(err) = rpc.error {
+                                    error!("GatewayClient: Received error for {} (ID {}): {}", method_name, id, err.message);
+                                }
                             }
                         }
                     }
@@ -119,15 +153,36 @@ impl GatewayClient {
     ///
     /// Serializes the request and wraps it in a JSON-RPC 2.0 envelope.
     pub fn send_request(&mut self, request: TuiRequest) -> Result<()> {
-        let mut val = serde_json::to_value(request)
+        let mut val = serde_json::to_value(request.clone())
             .context("GatewayClient: Failed to serialize request")?;
         
+        let id = self.next_id;
+        self.next_id += 1;
+
+        // Get method name for tracking
+        let method_name = match request {
+            TuiRequest::GatewayReady => "gateway.ready",
+            TuiRequest::SessionCreate(_) => "session.create",
+            TuiRequest::SessionResume(_) => "session.resume",
+            TuiRequest::SessionList => "session.list",
+            TuiRequest::SessionClose { .. } => "session.close",
+            TuiRequest::SessionActivate { .. } => "session.activate",
+            TuiRequest::PromptSubmit(_) => "prompt.submit",
+            TuiRequest::ApprovalRespond(_) => "approval.respond",
+            TuiRequest::CompleteSlash { .. } => "complete.slash",
+            TuiRequest::CompletePath { .. } => "complete.path",
+            TuiRequest::SlashExec(_) => "slash.exec",
+            TuiRequest::ConfigGet(_) => "config.get",
+            TuiRequest::ConfigSet { .. } => "config.set",
+            TuiRequest::TerminalResize { .. } => "terminal.resize",
+        };
+        
+        self.pending_requests.lock().unwrap().insert(id, method_name.to_string());
+
         // Add JSON-RPC 2.0 metadata
         if let Some(obj) = val.as_object_mut() {
             obj.insert("jsonrpc".to_string(), serde_json::Value::String("2.0".to_string()));
-            // Use a simple incrementing ID if we wanted to track responses, 
-            // but for now 1 is enough for the gateway to accept it as a request.
-            obj.insert("id".to_string(), serde_json::Value::Number(1.into()));
+            obj.insert("id".to_string(), serde_json::Value::Number(id.into()));
         }
 
         let transport = self

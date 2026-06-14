@@ -925,6 +925,46 @@ impl App {
                 self.handle_session_info(info)?;
             }
 
+            GatewayMessage::StatusUpdate(status) => {
+                debug!("Status update: {:?}", status);
+            }
+            GatewayMessage::ReasoningAvailable(reasoning) => {
+                debug!("Reasoning available: {:?}", reasoning);
+            }
+            GatewayMessage::ReasoningDelta(delta) => {
+                debug!("Reasoning delta: {:?}", delta);
+            }
+            GatewayMessage::MessageStart(start) => {
+                debug!("Message start: {:?}", start);
+            }
+            GatewayMessage::ThinkingDelta(delta) => {
+                debug!("Thinking delta: {:?}", delta);
+            }
+            GatewayMessage::NoticeUpsert(notice) => {
+                debug!("Notice upsert: {:?}", notice);
+            }
+            GatewayMessage::NoticeClear(notice) => {
+                debug!("Notice clear: {:?}", notice);
+            }
+            GatewayMessage::PreviewRestartProgress(progress) => {
+                debug!("Preview restart progress: {:?}", progress);
+            }
+            GatewayMessage::PreviewRestartComplete(complete) => {
+                debug!("Preview restart complete: {:?}", complete);
+            }
+            GatewayMessage::VoiceTranscript(transcript) => {
+                debug!("Voice transcript: {:?}", transcript);
+            }
+            GatewayMessage::VoiceStatus(status) => {
+                debug!("Voice status: {:?}", status);
+            }
+            GatewayMessage::BrowserProgress(progress) => {
+                debug!("Browser progress: {:?}", progress);
+            }
+            GatewayMessage::SkinChanged(skin) => {
+                debug!("Skin changed: {:?}", skin);
+            }
+
             // Messages
             GatewayMessage::MessageDelta(delta) => {
                 self.handle_message_delta(delta)?;

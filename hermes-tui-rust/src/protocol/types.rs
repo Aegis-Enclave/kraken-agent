@@ -400,11 +400,32 @@ pub enum GatewayMessageData {
     #[serde(rename = "session.info")]
     SessionInfo(serde_json::Value),
 
-    // Messages
+    #[serde(rename = "status.update")]
+    StatusUpdate(serde_json::Value),
+
+    #[serde(rename = "reasoning.available")]
+    ReasoningAvailable(serde_json::Value),
+
+    #[serde(rename = "reasoning.delta")]
+    ReasoningDelta(serde_json::Value),
+
+    #[serde(rename = "message.start")]
+    MessageStart(serde_json::Value),
+
     #[serde(rename = "message.delta")]
     MessageDelta(MessageDelta),
+
     #[serde(rename = "message.complete")]
     MessageComplete(MessageComplete),
+
+    #[serde(rename = "thinking.delta")]
+    ThinkingDelta(serde_json::Value),
+
+    #[serde(rename = "notice.upsert")]
+    NoticeUpsert(serde_json::Value),
+
+    #[serde(rename = "notice.clear")]
+    NoticeClear(serde_json::Value),
 
     // Tools
     #[serde(rename = "tool.start")]
@@ -435,6 +456,26 @@ pub enum GatewayMessageData {
     // Prompt
     #[serde(rename = "prompt.submit")]
     PromptSubmit(PromptSubmitResponse),
+
+    // Preview
+    #[serde(rename = "preview.restart.progress")]
+    PreviewRestartProgress(serde_json::Value),
+    #[serde(rename = "preview.restart.complete")]
+    PreviewRestartComplete(serde_json::Value),
+
+    // Voice
+    #[serde(rename = "voice.transcript")]
+    VoiceTranscript(serde_json::Value),
+    #[serde(rename = "voice.status")]
+    VoiceStatus(serde_json::Value),
+
+    // Browser
+    #[serde(rename = "browser.progress")]
+    BrowserProgress(serde_json::Value),
+
+    // Skin
+    #[serde(rename = "skin.changed")]
+    SkinChanged(serde_json::Value),
 
     // Error
     #[serde(rename = "error")]
