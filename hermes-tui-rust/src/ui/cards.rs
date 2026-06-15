@@ -41,11 +41,11 @@ pub enum ToolStatus {
     Pending,
 }
 
-/// Tool card data for displaying tool execution details
-#[derive(Debug, Clone)]
 pub struct ToolCardData {
     /// Name of the tool
     pub tool_name: String,
+    /// Unique call ID for tracking this tool invocation
+    pub call_id: String,
     /// Current execution status
     pub status: ToolStatus,
     /// Execution duration in milliseconds
@@ -59,16 +59,22 @@ pub struct ToolCardData {
 }
 
 impl ToolCardData {
-    /// Create tool card data for a running tool
     pub fn running(tool_name: impl Into<String>) -> Self {
         Self {
             tool_name: tool_name.into(),
+            call_id: String::new(),
             status: ToolStatus::Running,
             duration_ms: None,
             arguments: None,
             result: None,
             error: None,
         }
+    }
+
+    /// Create tool card data with a specific call_id
+    pub fn with_call_id(mut self, call_id: impl Into<String>) -> Self {
+        self.call_id = call_id.into();
+        self
     }
 
     /// Mark the tool as completed with result
@@ -95,11 +101,6 @@ impl ToolCardData {
         self
     }
 }
-
-/// Card component for displaying special messages
-///
-/// This component renders a styled card with a title, content, and appropriate
-/// colors based on the card type.
 #[derive(Debug, Clone)]
 pub struct CardComponent {
     /// Card type (determines styling)
@@ -108,17 +109,27 @@ pub struct CardComponent {
     title: String,
     /// Card content
     content: String,
+    /// Unique call ID for tool tracking
+    call_id: String,
+    /// Whether the card is expanded (shows full content)
+    expanded: bool,
+    /// Animation frame counter for spinner
+    spinner_frame: u32,
     /// Colors from configuration
     colors: ChatColorsRgb,
 }
 
 impl CardComponent {
+
     /// Create a new card with the given type, title, and content
     pub fn new(card_type: CardType, title: impl Into<String>, content: impl Into<String>, colors: ChatColorsRgb) -> Self {
         Self {
             card_type,
             title: title.into(),
             content: content.into(),
+            call_id: String::new(),
+            expanded: false,
+            spinner_frame: 0,
             colors,
         }
     }
@@ -149,12 +160,52 @@ impl CardComponent {
     }
 
     /// Create a new tool card from ToolCardData
-    pub fn tool_card(data: &ToolCardData, colors: ChatColorsRgb) -> Self {
+    pub fn tool_card(data: &ToolCardData, colors: ChatColorsRgb, spinner_frame: u32) -> Self {
         let title = Self::tool_card_title(data);
-        let content = Self::tool_card_content(data);
-        Self::new(CardType::Tool, title, content, colors)
+        let content = Self::tool_card_content(data, spinner_frame);
+        Self {
+            card_type: CardType::Tool,
+            title,
+            content,
+            call_id: data.call_id.clone(),
+            expanded: false,
+            spinner_frame: 0,
+            colors,
+        }
     }
 
+    /// Update this card from ToolCardData (preserves expanded state)
+    pub fn update_from_data(&mut self, data: &ToolCardData) {
+        self.title = Self::tool_card_title(data);
+        self.content = Self::tool_card_content(data, self.spinner_frame);
+    }
+
+    /// Toggle the expanded state of the card
+    pub fn toggle_expanded(&mut self) {
+        self.expanded = !self.expanded;
+    }
+
+    /// Set the spinner animation frame
+    pub fn set_spinner_frame(&mut self, frame: u32) {
+        self.spinner_frame = frame;
+    }
+
+    /// Get the call_id
+    pub fn call_id(&self) -> &str {
+        &self.call_id
+    }
+
+    /// Check if the card is expanded
+    pub fn is_expanded(&self) -> bool {
+        self.expanded
+    }
+
+    /// Update tool card content for a running tool with throbber spinner
+    pub fn running_spinner(frame: u32) -> String {
+        let spinner_chars = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+        let idx = (frame as usize) % spinner_chars.len();
+        format!("{} Running...", spinner_chars[idx])
+    }
     /// Build the title for a tool card
     fn tool_card_title(data: &ToolCardData) -> String {
         let status_icon = match data.status {
@@ -168,38 +219,44 @@ impl CardComponent {
     }
 
     /// Build the content for a tool card
-    fn tool_card_content(data: &ToolCardData) -> String {
+    /// When expanded, shows full content; when collapsed, shows summary only
+    fn tool_card_content(data: &ToolCardData, spinner_frame: u32) -> String {
         let mut parts = Vec::new();
 
         if let Some(args) = &data.arguments {
             parts.push(format!("Args: {}", args));
         }
 
-        match data.status {
+        // For collapsed view, show only a single-line summary
+        let result_text = match data.status {
             ToolStatus::Running => {
-                parts.push("Running...".to_string());
+                // Use the running_spinner with throttled frame
+                let throttled = spinner_frame / 10;
+                Self::running_spinner(throttled)
             }
             ToolStatus::Completed => {
                 if let Some(result) = &data.result {
-                    // Truncate long results
-                    if result.len() > 500 {
-                        parts.push(format!("Result: {}...", &result[..497]));
+                    if result.len() > 120 {
+                        format!("Result: {}...", &result[..117])
                     } else {
-                        parts.push(format!("Result: {}", result));
+                        format!("Result: {}", result)
                     }
+                } else {
+                    "Completed".to_string()
                 }
             }
             ToolStatus::Failed => {
                 if let Some(error) = &data.error {
-                    parts.push(format!("Error: {}", error));
+                    format!("Error: {}", error)
                 } else {
-                    parts.push("Failed (no error message)".to_string());
+                    "Failed (no error message)".to_string()
                 }
             }
             ToolStatus::Pending => {
-                parts.push("Waiting...".to_string());
+                "Waiting...".to_string()
             }
-        }
+        };
+        parts.push(result_text);
 
         parts.join("\n")
     }
@@ -274,10 +331,19 @@ impl CardComponent {
     /// Render the card
     pub fn render(&self, frame: &mut Frame, area: Rect) {
         let border_color = self.border_color();
+        let is_tool = self.card_type == CardType::Tool;
+        
+        // Build title with expand/collapse indicator for tool cards
+        let title = if is_tool {
+            let indicator = if self.expanded { " ▼ " } else { " ▶ " };
+            format!("{}{}", indicator, self.title)
+        } else {
+            format!(" {} ", self.title)
+        };
         
         // Create a block for the card
         let block = Block::default()
-            .title(format!(" {} ", self.title))
+            .title(title)
             .borders(Borders::ALL)
             .border_type(BorderType::Rounded)
             .border_style(Style::new().fg(border_color))
@@ -289,9 +355,22 @@ impl CardComponent {
         // Render the block
         frame.render_widget(block, area);
 
+        // Determine what content to show based on expanded state
+        let display_content = if is_tool && !self.expanded {
+            // Collapsed: show only first line or truncated summary
+            let first_line = self.content.lines().next().unwrap_or(&self.content);
+            if first_line.len() > area.width as usize {
+                format!("{}...  (press Enter to expand)", &first_line[..area.width.saturating_sub(25) as usize])
+            } else {
+                format!("{}  (Enter to expand)", first_line)
+            }
+        } else {
+            self.content.clone()
+        };
+        
         // Create content text
         let content_text = Text::from(Line::from(Span::styled(
-            &self.content,
+            &display_content,
             Style::new().fg(self.text_color()),
         )));
         
@@ -302,6 +381,7 @@ impl CardComponent {
         
         frame.render_widget(paragraph, inner_area);
     }
+
 }
 
 /// Card manager for handling multiple visible cards
@@ -401,30 +481,71 @@ impl CardManager {
 
     /// Add a tool card from ToolCardData
     pub fn add_tool_card(&mut self, data: ToolCardData) {
-        self.add_card(CardComponent::tool_card(&data, self.colors));
+        // Use 0 as initial frame; the tick_spinners loop will advance it
+        self.add_card(CardComponent::tool_card(&data, self.colors, 0));
     }
 
-    /// Update the status of an existing tool card by tool name
+    /// Update the status of an existing tool card by call_id
     pub fn update_tool_status(
         &mut self,
-        tool_name: &str,
+        call_id: &str,
         status: ToolStatus,
         result: Option<String>,
         error: Option<String>,
     ) -> bool {
-        if let Some(card) = self.cards.iter_mut().find(|c| c.title().contains(tool_name)) {
+        if let Some(card) = self.cards.iter_mut().find(|c| c.call_id() == call_id) {
             let data = ToolCardData {
-                tool_name: tool_name.to_string(),
+                tool_name: card.title().trim_matches(' ').to_string(), // approximate
+                call_id: call_id.to_string(),
                 status,
                 duration_ms: None,
                 arguments: None,
                 result,
                 error,
             };
-            *card = CardComponent::tool_card(&data, self.colors);
+            card.update_from_data(&data);
             true
         } else {
             false
+        }
+    }
+
+    /// Find a card by call_id
+    pub fn find_by_call_id(&self, call_id: &str) -> Option<&CardComponent> {
+        self.cards.iter().find(|c| c.call_id() == call_id)
+    }
+
+    /// Find a card by call_id (mutable)
+    pub fn find_by_call_id_mut(&mut self, call_id: &str) -> Option<&mut CardComponent> {
+        self.cards.iter_mut().find(|c| c.call_id() == call_id)
+    }
+
+    /// Update a tool card by call_id with new data
+    pub fn update_by_call_id(&mut self, call_id: &str, data: &ToolCardData) -> bool {
+        if let Some(card) = self.find_by_call_id_mut(call_id) {
+            card.update_from_data(data);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Toggle expansion of a tool card by call_id
+    pub fn toggle_expanded(&mut self, call_id: &str) -> bool {
+        if let Some(card) = self.find_by_call_id_mut(call_id) {
+            card.toggle_expanded();
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Advance spinner frames for all tool cards
+    pub fn tick_spinners(&mut self) {
+        for card in &mut self.cards {
+            if card.card_type() == CardType::Tool {
+                card.spinner_frame = card.spinner_frame.wrapping_add(1);
+            }
         }
     }
 
