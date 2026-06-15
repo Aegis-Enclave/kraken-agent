@@ -259,6 +259,30 @@ pub struct ToolComplete {
 }
 
 // ============================================================================
+// Subagent Types
+// ============================================================================
+
+/// Subagent event from the gateway (start, thinking, progress, tool, complete)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SubagentEvent {
+    pub goal: String,
+    pub task_count: usize,
+    pub task_index: usize,
+    pub subagent_id: Option<String>,
+    pub parent_id: Option<String>,
+    pub child_session_id: Option<String>,
+    pub depth: Option<usize>,
+    pub model: Option<String>,
+    pub tool_count: Option<usize>,
+    pub toolsets: Option<Vec<String>>,
+    pub tool_name: Option<String>,
+    pub text: Option<String>,
+    pub status: Option<String>,
+    pub summary: Option<String>,
+    pub duration_seconds: Option<f64>,
+}
+
+// ============================================================================
 // Approval Types
 // ============================================================================
 
@@ -430,6 +454,18 @@ pub enum GatewayMessageData {
     #[serde(rename = "message.delta")]
     MessageDelta(MessageDelta),
 
+
+    // Subagents
+    #[serde(rename = "subagent.start")]
+    SubagentStart(SubagentEvent),
+    #[serde(rename = "subagent.thinking")]
+    SubagentThinking(SubagentEvent),
+    #[serde(rename = "subagent.progress")]
+    SubagentProgress(SubagentEvent),
+    #[serde(rename = "subagent.tool")]
+    SubagentTool(SubagentEvent),
+    #[serde(rename = "subagent.complete")]
+    SubagentComplete(SubagentEvent),
     #[serde(rename = "message.complete")]
     MessageComplete(MessageComplete),
 
