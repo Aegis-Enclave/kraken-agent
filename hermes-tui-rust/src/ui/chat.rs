@@ -18,6 +18,7 @@ use ratatui::{
 use crate::protocol::types::MessageRole;
 use crate::state::{config::ChatColorsRgb, messages::Message};
 
+use std::collections::HashSet;
 /// Chat component for displaying conversation messages
 ///
 /// This component renders a scrollable chat transcript with proper
@@ -35,6 +36,8 @@ pub struct ChatComponent {
     colors: ChatColorsRgb,
     /// Whether to show timestamps
     show_timestamps: bool,
+    /// Tracking which system messages are expanded (by message_id)
+    expanded_systems: HashSet<String>,
     /// Content width used for word-wrap calculations (set each render)
     inner_width: u16,
 }
@@ -50,6 +53,7 @@ impl ChatComponent {
             colors,
             show_timestamps,
             inner_width: 80,
+            expanded_systems: HashSet::new(),
         }
     }
 
@@ -84,22 +88,28 @@ impl ChatComponent {
     pub fn set_visible_height(&mut self, height: u16) {
         self.visible_height = height;
     }
-
     /// Set the content width for word-wrap calculations
     pub fn set_inner_width(&mut self, width: u16) {
         self.inner_width = width;
     }
+
     /// Calculate the height of a message in lines, accounting for word-wrap
     pub fn message_height(&self, message: &Message) -> u16 {
-        let content_width = self.inner_width.saturating_sub(2).max(10) as usize; // 2 for padding
+        let is_user = message.role == MessageRole::User;
+        // User messages have border padding (2) + spacing (1) = 3 extra lines
+        // Non-user gutter layout has just spacing (1) extra line
+        let content_width = if is_user {
+            self.inner_width.saturating_sub(2).max(10) as usize
+        } else {
+            self.inner_width.saturating_sub(4).max(6) as usize
+        };
         let mut total_wrapped_lines = 0u16;
 
         for line in message.content.lines() {
             if line.is_empty() {
                 total_wrapped_lines += 1;
             } else if content_width > 0 {
-                // Calculate how many wrapped lines this line produces
-                let line_len = line.len(); // approximate for ASCII
+                let line_len = line.len();
                 let wrapped = ((line_len as f64) / (content_width as f64)).ceil() as u16;
                 total_wrapped_lines += wrapped.max(1);
             } else {
@@ -111,8 +121,11 @@ impl ChatComponent {
             total_wrapped_lines = 1;
         }
 
-        // Add 2 lines for bubble borders (top/bottom) + 1 line for spacing
-        total_wrapped_lines + 3
+        if is_user {
+            total_wrapped_lines + 3 // 2 borders + 1 spacing
+        } else {
+            total_wrapped_lines + 1 // 1 spacing between messages
+        }
     }
 
     /// Scroll down by the given amount (in lines)
@@ -225,6 +238,13 @@ impl ChatComponent {
         self.scroll_to_bottom();
     }
 
+    /// Toggle expansion of a system message
+    pub fn toggle_system_expanded(&mut self, message_id: &str) {
+        if !self.expanded_systems.remove(message_id) {
+            self.expanded_systems.insert(message_id.to_string());
+        }
+    }
+
     /// Render the chat component
     pub fn render(&mut self, frame: &mut Frame, area: Rect) {
         if self.messages.is_empty() {
@@ -281,7 +301,7 @@ impl ChatComponent {
         // Render visible messages
         let mut y_offset = 0u16;
         
-        for message in self.messages.iter().skip(start_idx) {
+        for (msg_idx, message) in self.messages.iter().enumerate().skip(start_idx) {
             if y_offset >= inner_area.height {
                 break;
             }
@@ -300,7 +320,16 @@ impl ChatComponent {
                     height: render_height,
                 };
                 
-                self.render_message(frame, msg_area, message);
+                // Check if previous message was a Tool (for response separator)
+                let prev_is_tool = if msg_idx > 0 {
+                    self.messages.get(msg_idx - 1)
+                        .map(|m| m.role == MessageRole::Tool)
+                        .unwrap_or(false)
+                } else {
+                    false
+                };
+                
+                self.render_message(frame, msg_area, message, prev_is_tool);
                 y_offset += render_height;
             }
             
@@ -327,60 +356,134 @@ impl ChatComponent {
         }
     }
 
-    /// Render a single message in a bubble
-    fn render_message(&self, frame: &mut Frame, area: Rect, message: &Message) {
+    /// Render a single message
+    fn render_message(&self, frame: &mut Frame, area: Rect, message: &Message, prev_is_tool: bool) {
         let role_style = self.get_role_style(message.role.clone());
-        let role_display = self.get_role_display(message.role.clone());
-
-        // Determine border type and style based on role
-        let (border_type, border_style) = match message.role {
-            MessageRole::Assistant => (BorderType::Thick, Style::new().fg(self.colors.border)),
-            MessageRole::User => (BorderType::Rounded, Style::new().fg(self.colors.user_bg)),
-            MessageRole::Tool => (BorderType::Rounded, Style::new().fg(self.colors.tool_text)),
-            MessageRole::System => (BorderType::Plain, Style::new().fg(self.colors.system_text)),
+        let role_glyph = match message.role {
+            MessageRole::User => "[U]",
+            MessageRole::Assistant => "[A]",
+            MessageRole::System => "[S]",
+            MessageRole::Tool => "[T]",
         };
 
-        // Create the bubble block
-        let mut block = Block::default()
-            .borders(Borders::ALL)
-            .border_type(border_type)
-            .border_style(border_style)
-            .title(Span::styled(
-                role_display,
-                role_style.add_modifier(Modifier::BOLD),
-            ));
+        if message.role == MessageRole::User {
+            // User messages keep the bubble style
+            let border_style = Style::new().fg(self.colors.user_bg);
+            let mut block = Block::default()
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(border_style)
+                .style(role_style);
 
-        // Determine tool emoji from the message context/name field (RPC metadata) instead of content parsing
-        if message.role == MessageRole::Tool {
-            let tool_name = message.context.as_deref()
-                .or(message.name.as_deref())
-                .unwrap_or("");
-            let emoji = get_tool_emoji(tool_name);
-            block = block.title_bottom(Line::from(vec![Span::raw(" "), Span::raw(emoji), Span::raw(" ")]));
-        }
+            // Add timestamp to bottom right
+            if self.show_timestamps {
+                let ts = message.timestamp.format("%H:%M:%S").to_string();
+                block = block.title_bottom(
+                    Line::from(vec![Span::styled(
+                        format!(" {} ", ts),
+                        Style::new()
+                            .fg(self.colors.timestamp)
+                            .add_modifier(Modifier::ITALIC),
+                    )])
+                    .alignment(ratatui::layout::Alignment::Right),
+                );
+            }
 
-        // Add timestamp to bottom right
-        if self.show_timestamps {
-            let ts = message.timestamp.format("%H:%M:%S").to_string();
-            block = block.title_bottom(
-                Line::from(vec![Span::styled(
+            let lines = self.render_message_content(message, area.width.saturating_sub(2));
+            let paragraph = Paragraph::new(Text::from(lines))
+                .block(block)
+                .wrap(ratatui::widgets::Wrap { trim: false });
+            frame.render_widget(paragraph, area);
+        } else {
+            // Non-user messages use gutter layout
+            let mut y = area.y;
+            let mut remaining_height = area.height;
+
+            // Response separator for Assistant after Tool
+            if prev_is_tool && message.role == MessageRole::Assistant {
+                if remaining_height > 0 {
+                    let sep = Line::from(Span::styled(
+                        " └─ Response ",
+                        Style::new()
+                            .fg(self.colors.border)
+                            .add_modifier(Modifier::DIM),
+                    ));
+                    frame.render_widget(Paragraph::new(sep), Rect::new(area.x, y, area.width, 1));
+                    y += 1;
+                    remaining_height = remaining_height.saturating_sub(1);
+                }
+            }
+
+            if remaining_height == 0 {
+                return;
+            }
+
+            // Gutter: role glyph with role-specific styling
+            let gutter_style = Style::new()
+                .fg(match message.role {
+                    MessageRole::Assistant => self.colors.assistant_text,
+                    MessageRole::System => self.colors.system_text,
+                    MessageRole::Tool => self.colors.tool_text,
+                    _ => self.colors.border,
+                })
+                .add_modifier(Modifier::BOLD);
+            let gutter = Line::from(Span::styled(role_glyph, gutter_style));
+            frame.render_widget(
+                Paragraph::new(gutter),
+                Rect::new(area.x, y, 3, 1.min(remaining_height)),
+            );
+
+            // Content area to the right of gutter
+            let content_width = area.width.saturating_sub(4);
+            let content_area = Rect::new(area.x + 3, y, content_width, remaining_height);
+            if content_width < 2 || remaining_height == 0 {
+                return;
+            }
+
+            // Get message content, possibly truncated for system messages
+            let display_content = if message.role == MessageRole::System
+                && message.content.len() > 400
+                && !message.message_id.as_deref()
+                    .map(|id| self.expanded_systems.contains(id))
+                    .unwrap_or(false)
+            {
+                format!("{}...\n (press 's' to expand)", &message.content[..397])
+            } else {
+                message.content.clone()
+            };
+
+            // Build message content temporarily for display
+            let temp_msg = Message {
+                content: display_content,
+                role: message.role.clone(),
+                ..message.clone()
+            };
+            let lines = self.render_message_content(&temp_msg, content_width);
+
+            let paragraph = Paragraph::new(Text::from(lines))
+                .wrap(ratatui::widgets::Wrap { trim: false });
+            frame.render_widget(paragraph, content_area);
+
+            // Timestamp on the right edge for non-user messages
+            if self.show_timestamps && remaining_height > 0 {
+                let ts = message.timestamp.format("%H:%M").to_string();
+                let ts_span = Span::styled(
                     format!(" {} ", ts),
                     Style::new()
                         .fg(self.colors.timestamp)
-                        .add_modifier(Modifier::ITALIC),
-                )])
-                .alignment(ratatui::layout::Alignment::Right),
-            );
+                        .add_modifier(Modifier::DIM),
+                );
+                frame.render_widget(
+                    Paragraph::new(Line::from(ts_span)),
+                    Rect::new(
+                        area.x + area.width.saturating_sub(ts.len() as u16 + 2),
+                        y,
+                        ts.len() as u16 + 2,
+                        1,
+                    ),
+                );
+            }
         }
-
-        // Build message lines with syntax highlighting for code blocks
-        let lines = self.render_message_content(message, area.width);
-
-        let paragraph = Paragraph::new(Text::from(lines))
-            .block(block)
-            .wrap(ratatui::widgets::Wrap { trim: false });
-
-        frame.render_widget(paragraph, area);
     }
 
     /// Render message content with optional syntax highlighting
@@ -584,38 +687,8 @@ impl ChatComponent {
     }
 }
 
-/// Determine the appropriate emoji for a tool name
-fn get_tool_emoji(tool_name: &str) -> &'static str {
-    if tool_name.is_empty() {
-        return "🛠️";
-    }
-    if tool_name.contains("run_shell") || tool_name.contains("bash") || tool_name.contains("terminal") {
-        "🐚"
-    } else if tool_name.contains("read_file") || tool_name.contains("write_file") || tool_name.contains("file") || tool_name.contains("patch") {
-        "📜"
-    } else if tool_name.contains("search") || tool_name.contains("grep") || tool_name.contains("glob") || tool_name.contains("find") {
-        "🔍"
-    } else if tool_name.contains("web_search") || tool_name.contains("browser") || tool_name.contains("http") {
-        "🌐"
-    } else if tool_name.contains("delegate") || tool_name.contains("task") {
-        "🤖"
-    } else if tool_name.contains("memory") || tool_name.contains("remember") {
-        "🧠"
-    } else if tool_name.contains("execute_code") || tool_name.contains("code") {
-        "💻"
-    } else if tool_name.contains("approve") || tool_name.contains("deny") {
-        "✅"
-    } else if tool_name.contains("error") || tool_name.contains("fail") {
-        "❌"
-    } else {
-        "🛠️"
-    }
-}
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use chrono::Utc;
 
+    #[allow(dead_code)]
     fn create_test_colors() -> ChatColorsRgb {
         ChatColorsRgb {
             user_bg: ratatui::style::Color::Indexed(238),
@@ -633,6 +706,7 @@ mod tests {
         }
     }
 
+    #[allow(dead_code)]
     fn create_test_message(role: MessageRole, content: &str) -> Message {
         Message::new(role, content)
     }
@@ -778,4 +852,3 @@ mod tests {
 
         assert_eq!(chat.messages().len(), 2);
     }
-}
