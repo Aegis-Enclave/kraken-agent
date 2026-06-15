@@ -544,7 +544,7 @@ impl App {
         // Add a system message about the reconnection
         let msg = Message::system(format!("Connection lost. Reconnecting (attempt {})...", self.reconnect_attempts));
         self.messages_mut().add_message(msg.clone());
-        self.chat_component_mut().add_message(msg);
+        self.chat_component.add_message(msg, &self.card_manager);
         
         // Attempt to reconnect
         if let Err(e) = self.connect_gateway() {
@@ -554,7 +554,7 @@ impl App {
             if self.reconnect_attempts >= 5 {
                 let fail_msg = Message::system("Failed to reconnect after multiple attempts. Restart the TUI or press Ctrl+C to exit.");
                 self.messages_mut().add_message(fail_msg.clone());
-                self.chat_component_mut().add_message(fail_msg);
+                self.chat_component.add_message(fail_msg, &self.card_manager);
                 self.reconnecting = false;
             }
             // Will try again on next loop iteration
@@ -684,8 +684,8 @@ impl App {
                         let title = if session.title.is_empty() { "Unnamed".to_string() } else { session.title.clone() };
                         let system_message = Message::system(format!("Resuming session: {}", title));
                         self.messages_mut().add_message(system_message.clone());
-                        self.chat_component_mut().add_message(system_message);
-                        self.chat_component_mut().scroll_to_bottom();
+                        self.chat_component.add_message(system_message, &self.card_manager);
+                        self.chat_component.scroll_to_bottom(&self.card_manager);
                         self.session_picker.hide();
                     }
                 }
@@ -725,18 +725,77 @@ impl App {
             }
         }
 
-
-        
-        // Check for Enter key in Insert mode - submit prompt
         let KeyEvent { code, modifiers, .. } = key;
-        if code == KeyCode::Enter && !modifiers.contains(KeyModifiers::SHIFT) {
+        // Normal mode navigation (only in Normal mode)
+        if self.input_mode == InputMode::Normal {
+            match code {
+                KeyCode::Char('i') => {
+                    self.set_input_mode(InputMode::Insert);
+                    self.input_composer.set_active(true);
+                    return Ok(());
+                }
+                KeyCode::Char('j') | KeyCode::Down => {
+                    self.chat_component.select_next(&self.card_manager);
+                    self.chat_component.ensure_selected_in_view(&self.card_manager);
+                    return Ok(());
+                }
+                KeyCode::Char('k') | KeyCode::Up => {
+                    self.chat_component.select_prev(&self.card_manager);
+                    self.chat_component.ensure_selected_in_view(&self.card_manager);
+                    return Ok(());
+                }
+                KeyCode::Enter => {
+                    // Toggle expansion for selected message
+                    if let Some(idx) = self.chat_component.get_selected_index() {
+                        let msg_id_opt = self.messages().get(idx).and_then(|m| m.message_id.clone());
+                        if let Some(msg_id) = &msg_id_opt {
+                            if !msg_id.starts_with("subagent:") {
+                                if let Some(msg) = self.messages().get(idx) {
+                                    if msg.role == MessageRole::System {
+                                        self.chat_component.toggle_system_expanded(msg_id);
+                                    } else if msg.role == MessageRole::Tool {
+                                        self.card_manager.toggle_expanded(msg_id);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    return Ok(());
+                }
+                KeyCode::PageUp => {
+                    self.chat_component.scroll_up(10);
+                    return Ok(());
+                }
+                KeyCode::PageDown => {
+                    self.chat_component.scroll_down(10, &self.card_manager);
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+
+        // Check for Esc key in Insert mode -> go to Normal
+        if code == KeyCode::Esc && self.input_mode == InputMode::Insert {
+            self.set_input_mode(InputMode::Normal);
+            self.input_composer.set_active(false);
+            // Select the last message
+            let len = self.chat_component.messages().len();
+            if len > 0 {
+                self.chat_component.select_prev(&self.card_manager);
+                self.chat_component.ensure_selected_in_view(&self.card_manager);
+            }
+            return Ok(());
+        }
+
+        // Check for Enter key in Insert mode - submit prompt
+        if self.input_mode == InputMode::Insert && code == KeyCode::Enter && !modifiers.contains(KeyModifiers::SHIFT) {
             if !self.input_composer.get_input().is_empty() {
                 self.submit_prompt()?;
                 self.current_input = self.input_composer.get_input().to_string();
                 return Ok(());
             }
         }
-        
+
         // Check for '/' key - switch to command mode
         if code == KeyCode::Char('/') {
             if self.input_mode == InputMode::Normal {
@@ -748,8 +807,8 @@ impl App {
                 return Ok(());
             }
         }
-        
-        // Check for Esc key - exit command mode or clear input
+
+        // Check for Esc key - exit command mode
         if code == KeyCode::Esc {
             if self.input_mode == InputMode::Command {
                 self.set_input_mode(InputMode::Normal);
@@ -760,36 +819,34 @@ impl App {
                 return Ok(());
             }
         }
-        
+
         // Check for Ctrl+N - new session
         if modifiers.contains(KeyModifiers::CONTROL) && code == KeyCode::Char('n') {
             self.create_new_session()?;
             return Ok(());
         }
-        
+
         // Check for Ctrl+R - resume session (for now, resume most recent)
         if modifiers.contains(KeyModifiers::CONTROL) && code == KeyCode::Char('r') {
             self.resume_session()?;
             return Ok(());
         }
-        
+
         // Check for Ctrl+L - list sessions
         if modifiers.contains(KeyModifiers::CONTROL) && code == KeyCode::Char('l') {
             self.list_sessions()?;
             return Ok(());
         }
-        
-        // Pass key to input composer for handling
-        let handled = self.input_composer.handle_key_event(key);
-        
-        if handled {
-            // If input composer handled the key, sync the app's legacy input state
-            self.current_input = self.input_composer.get_input().to_string();
-            // cursor_pos is private, so we can't access it directly
-            // For now, just update from the composer's internal state
-            self.input_mode = self.input_composer.input_mode();
+
+        // Pass key to input composer for handling (only in Insert/Command mode)
+        if self.input_mode == InputMode::Insert || self.input_mode == InputMode::Command {
+            let handled = self.input_composer.handle_key_event(key);
+            if handled {
+                self.current_input = self.input_composer.get_input().to_string();
+                self.input_mode = self.input_composer.input_mode();
+            }
         }
-        
+
         Ok(())
     }
     
@@ -831,10 +888,9 @@ impl App {
         // Add user message to chat immediately (optimistic update)
         let user_message = Message::user(message_content);
         self.messages_mut().add_message(user_message.clone());
-        self.chat_component_mut().add_message(user_message);
-        
+        self.chat_component.add_message(user_message, &self.card_manager);
         // Auto-scroll to bottom
-        self.chat_component_mut().scroll_to_bottom();
+        self.chat_component.scroll_to_bottom(&self.card_manager);
         
         Ok(())
     }
@@ -858,8 +914,8 @@ impl App {
         // Add the command to chat for visibility
         let user_message = Message::user(format!("/{}", command_clone));
         self.messages_mut().add_message(user_message.clone());
-        self.chat_component_mut().add_message(user_message);
-        self.chat_component_mut().scroll_to_bottom();
+        self.chat_component.add_message(user_message, &self.card_manager);
+        self.chat_component.scroll_to_bottom(&self.card_manager);
         
         Ok(())
     }
@@ -883,8 +939,8 @@ impl App {
         // Show feedback to user
         let system_message = Message::system("Creating new session...");
         self.messages_mut().add_message(system_message.clone());
-        self.chat_component_mut().add_message(system_message);
-        self.chat_component_mut().scroll_to_bottom();
+        self.chat_component.add_message(system_message, &self.card_manager);
+        self.chat_component.scroll_to_bottom(&self.card_manager);
         
         Ok(())
     }
@@ -909,13 +965,13 @@ impl App {
             let session_name_display = session_name.as_deref().unwrap_or("Unnamed");
             let system_message = Message::system(format!("Resuming session: {}", session_name_display));
             self.messages_mut().add_message(system_message.clone());
-            self.chat_component_mut().add_message(system_message);
-            self.chat_component_mut().scroll_to_bottom();
+            self.chat_component.add_message(system_message, &self.card_manager);
+            self.chat_component.scroll_to_bottom(&self.card_manager);
         } else {
             let system_message = Message::system("No previous sessions to resume");
             self.messages_mut().add_message(system_message.clone());
-            self.chat_component_mut().add_message(system_message);
-            self.chat_component_mut().scroll_to_bottom();
+            self.chat_component.add_message(system_message, &self.card_manager);
+            self.chat_component.scroll_to_bottom(&self.card_manager);
         }
         
         Ok(())
@@ -932,8 +988,8 @@ impl App {
         // Show feedback to user
         let system_message = Message::system("Fetching session list...");
         self.messages_mut().add_message(system_message.clone());
-        self.chat_component_mut().add_message(system_message);
-        self.chat_component_mut().scroll_to_bottom();
+        self.chat_component.add_message(system_message, &self.card_manager);
+        self.chat_component.scroll_to_bottom(&self.card_manager);
         
         Ok(())
     }
@@ -969,7 +1025,7 @@ impl App {
         if mouse.kind == MouseEventKind::ScrollUp {
             self.chat_component.scroll_up(3);
         } else if mouse.kind == MouseEventKind::ScrollDown {
-            self.chat_component.scroll_down(3);
+            self.chat_component.scroll_down(3, &self.card_manager);
         }
         Ok(())
     }
@@ -1084,6 +1140,22 @@ impl App {
                 self.handle_message_complete(complete)?;
             }
             
+            // Subagents
+            GatewayMessage::SubagentStart(event) => {
+                self.handle_subagent_start(event)?;
+            }
+            GatewayMessage::SubagentThinking(event) => {
+                self.handle_subagent_thinking(event)?;
+            }
+            GatewayMessage::SubagentProgress(event) => {
+                self.handle_subagent_progress(event)?;
+            }
+            GatewayMessage::SubagentTool(event) => {
+                self.handle_subagent_tool(event)?;
+            }
+            GatewayMessage::SubagentComplete(event) => {
+                self.handle_subagent_complete(event)?;
+            }
             // Tools
             GatewayMessage::ToolStart(tool_start) => {
                 self.handle_tool_start(tool_start)?;
@@ -1097,7 +1169,7 @@ impl App {
             GatewayMessage::ToolGenerating(generating) => {
                 debug!("Tool generating: {:?}", generating);
             }
-            
+
             // Approvals
             GatewayMessage::ApprovalRequest(request) => {
                 self.handle_approval_request(request)?;
@@ -1260,13 +1332,14 @@ impl App {
             );
         self.card_manager_mut().add_tool_card(data);
 
-        // Also show in chat for compatibility
-        let message = Message::tool(
+        // Show in chat with call_id as message_id for in-place updates later
+        let mut message = Message::tool(
             format!("Tool '{}' started...", tool_start.tool_name),
             tool_start.tool_name,
         );
+        message.message_id = Some(tool_start.call_id.clone());
         self.messages_mut().add_message(message.clone());
-        self.chat_component_mut().add_message(message);
+        self.chat_component.add_message(message, &self.card_manager);
 
         Ok(())
     }
@@ -1317,20 +1390,23 @@ impl App {
             };
             card.update_from_data(&data);
         }
-        // Also show in chat for compatibility
+        // Update tool message in-place using message_id (set in handle_tool_start)
         let result_text = if let Some(ref error) = tool_complete.error {
             format!("Error: {}", error)
         } else {
             tool_complete.result.to_string()
         };
+        let duration_str = tool_complete.duration_ms.map_or(String::new(), |ms| format!(" ({}ms)", ms));
+        let content = format!("Tool completed: {}{}", result_text, duration_str);
 
-        let message = Message::tool(
-            format!("Tool completed: {}", result_text),
-            format!("{} ({}ms)", tool_complete.call_id, tool_complete.duration_ms.unwrap_or(0)),
-        );
-        self.messages_mut().add_message(message.clone());
-        self.chat_component_mut().add_message(message);
-
+        if let Some(updated_msg) = self.messages_mut().update_message_by_id(&tool_complete.call_id, content.clone()) {
+            self.chat_component.update_message(updated_msg);
+        } else {
+            // Fallback: starting message was missed, add a new one
+            let message = Message::tool(content, format!("{} ({:?}ms)", tool_complete.call_id, tool_complete.duration_ms));
+            self.messages_mut().add_message(message.clone());
+            self.chat_component.add_message(message, &self.card_manager);
+        }
         Ok(())
     }
     
@@ -1405,7 +1481,7 @@ impl App {
         message.complete = false;
         let message_clone = message.clone();
         self.messages_mut().add_message(message);
-        self.chat_component_mut().add_message(message_clone);
+        self.chat_component.add_message(message_clone, &self.card_manager);
         Ok(())
     }
     
@@ -1414,8 +1490,8 @@ impl App {
         self.thinking = false;
         let message = Message::new(MessageRole::Assistant, complete.text);
         self.messages_mut().add_message(message.clone());
-        self.chat_component_mut().add_message(message);
-        self.chat_component_mut().scroll_to_bottom();
+        self.chat_component.add_message(message, &self.card_manager);
+        self.chat_component.scroll_to_bottom(&self.card_manager);
         Ok(())
     }
     fn handle_approval_request(&mut self, request: ApprovalRequest) -> Result<()> {
@@ -1459,16 +1535,16 @@ impl App {
             
             let message = Message::system(output);
             self.messages_mut().add_message(message.clone());
-            self.chat_component_mut().add_message(message);
-            self.chat_component_mut().scroll_to_bottom();
+            self.chat_component.add_message(message, &self.card_manager);
+            self.chat_component.scroll_to_bottom(&self.card_manager);
         }
         if let Some(warning) = response.warning {
             log::warn!("Slash command warning: {}", warning);
             
             let message = Message::system(format!("Warning: {}", warning));
             self.messages_mut().add_message(message.clone());
-            self.chat_component_mut().add_message(message);
-            self.chat_component_mut().scroll_to_bottom();
+            self.chat_component.add_message(message, &self.card_manager);
+            self.chat_component.scroll_to_bottom(&self.card_manager);
         }
         Ok(())
     }
@@ -1505,7 +1581,7 @@ impl App {
     /// Sync chat component with message history
     fn sync_chat_with_messages(&mut self) {
         let messages = self.messages().all_messages().clone();
-        self.chat_component_mut().set_messages(messages);
+        self.chat_component.set_messages(messages, &self.card_manager);
     }
     /// Draw the UI
     pub fn draw(&mut self) -> Result<()> {
@@ -1518,7 +1594,6 @@ impl App {
         self.toolbar.update_status(connected, Some(&model), session);
 
         // Pre-compute layout values to avoid borrow conflicts inside the closure
-        let has_cards = !self.card_manager.is_empty();
         let hashline_block = self.message_history.last()
             .and_then(|m| if m.is_edit_tool_message() {
                 crate::state::hashline::HashlineParser::parse(&m.content)
@@ -1526,9 +1601,7 @@ impl App {
                 None
             });
         let has_hashline = hashline_block.is_some();
-        let target_height = if has_cards {
-            (self.card_manager.len() as u16 * 3).min(12).max(3)
-        } else if has_hashline {
+        let target_height = if has_hashline {
             8
         } else {
             0
@@ -1604,16 +1677,13 @@ impl App {
             let chat_component = unsafe { &mut *chat_component_ptr };
             let chat_area = main_layout[1];
             chat_component.set_visible_height(chat_area.height.saturating_sub(2));
-            chat_component.render(frame, chat_area);
+            chat_component.render(frame, chat_area, unsafe { &*card_manager_ptr }, unsafe { &*subagent_list_ptr });
             
-            // Activity
+            // Activity (hashline only - cards are drawn inline in chat)
             if activity_height > 0 {
-                let card_manager = unsafe { &*card_manager_ptr };
                 let hashline_viewer = unsafe { &*hashline_viewer_ptr };
                 let activity_area = main_layout[2];
-                if has_cards {
-                    card_manager.render_stack(frame, activity_area);
-                } else if let Some(ref block) = hashline_block {
+                if let Some(ref block) = hashline_block {
                     hashline_viewer.render(block, activity_area, frame);
                 }
             }
@@ -1763,6 +1833,79 @@ impl App {
         
         Ok(())
     }
+    fn handle_subagent_start(&mut self, event: SubagentEvent) -> Result<()> {
+        debug!("Subagent start: {}", event.subagent_id.as_deref().unwrap_or("?"));
+        let agent_id = event.subagent_id.clone().unwrap_or_else(|| format!("agent-{}", event.task_index));
+        let info = crate::ui::subagent::SubagentInfo::new(
+            &agent_id,
+            &event.goal,
+            event.parent_id.clone(),
+        );
+        self.subagent_list_mut().upsert(info);
+        // Add system message to chat with special ID for inline rendering
+        let mut msg = Message::system(format!("Subagent '{}' started: {}", agent_id, event.goal));
+        msg.message_id = Some(format!("subagent:{}", agent_id));
+        self.messages_mut().add_message(msg.clone());
+        self.chat_component.add_message(msg, &self.card_manager);
+        Ok(())
+    }
+
+    fn handle_subagent_thinking(&mut self, event: SubagentEvent) -> Result<()> {
+        debug!("Subagent thinking: {:?}", event.text);
+        Ok(())
+    }
+
+    fn handle_subagent_progress(&mut self, event: SubagentEvent) -> Result<()> {
+        debug!("Subagent progress: {:?}", event.text);
+        Ok(())
+    }
+
+    fn handle_subagent_tool(&mut self, event: SubagentEvent) -> Result<()> {
+        debug!("Subagent tool: {} - {}", event.subagent_id.as_deref().unwrap_or("?"), event.tool_name.as_deref().unwrap_or("?"));
+        // Update subagent goal to show current tool
+        if let Some(agent_id) = &event.subagent_id {
+            if let Some(tool_name) = &event.tool_name {
+                let info = crate::ui::subagent::SubagentInfo::new(
+                    agent_id,
+                    format!("Running tool '{}'...", tool_name),
+                    event.parent_id.clone(),
+                );
+                self.subagent_list_mut().upsert(info);
+            }
+        }
+        Ok(())
+    }
+
+    fn handle_subagent_complete(&mut self, event: SubagentEvent) -> Result<()> {
+        debug!("Subagent complete: {}", event.subagent_id.as_deref().unwrap_or("?"));
+        if let Some(agent_id) = &event.subagent_id {
+            let summary = event.summary.clone().unwrap_or_default();
+            let mut info = crate::ui::subagent::SubagentInfo::new(
+                agent_id,
+                &event.goal,
+                event.parent_id.clone(),
+            );
+            if event.status.as_deref() == Some("failed") || event.status.as_deref() == Some("error") {
+                info.mark_failed();
+            } else {
+                info.mark_completed(summary.clone());
+            }
+            self.subagent_list_mut().upsert(info);
+            // Update the chat message inline
+            let status_str = if event.status.as_deref() == Some("failed") || event.status.as_deref() == Some("error") {
+                "Failed"
+            } else {
+                "Completed"
+            };
+            let content = format!("Subagent '{}' {}: {}", agent_id, status_str, summary);
+            let msg_id = format!("subagent:{}", agent_id);
+            if let Some(updated_msg) = self.messages_mut().update_message_by_id(&msg_id, content) {
+                self.chat_component.update_message(updated_msg);
+            }
+        }
+        Ok(())
+    }
+
 }
 
 impl Drop for App {
