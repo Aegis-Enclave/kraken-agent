@@ -87,14 +87,14 @@ impl CompletionPopup {
             return;
         }
 
-        // Compute popup area above the composer
+        // Use the passed area directly — caller (app.rs) already positions it above the composer.
+        // No additional Y-offset to avoid double-subtraction bug.
         let max_height = 8;
-        let height = (self.items.len() as u16 + 2).min(max_height);
-        let y = composer_area.y.saturating_sub(height);
+        let height = (self.items.len() as u16 + 2).min(max_height).min(composer_area.height);
         let popup_area = Rect::new(
-            composer_area.x.saturating_add(2),
-            y,
-            composer_area.width.saturating_sub(4).max(10),
+            composer_area.x,
+            composer_area.y,
+            composer_area.width.min(40).max(10),
             height,
         );
 
