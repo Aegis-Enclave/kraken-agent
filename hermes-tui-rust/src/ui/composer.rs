@@ -328,14 +328,14 @@ impl InputComposer {
         (line_count + 1).min(max_height).max(1)
     }
     /// Render the composer
-    /// Render the composer without a surrounding block (for the clean Kraken footer)
+    /// Render the composer without a surrounding block (for the clean footer)
     pub fn render_clean(&self, frame: &mut Frame, area: Rect) {
         let mut lines = Vec::new();
 
         // Welcome message (if input is empty)
         if self.input.is_empty() {
             lines.push(Line::from(Span::styled(
-                "Welcome to Kraken Agent! Type your message or /help for commands.",
+                "Welcome to Hermes TUI! Type your message or /help for commands.",
                 Style::new().fg(Color::Rgb(248, 248, 242)),
             )));
             lines.push(Line::from(vec![

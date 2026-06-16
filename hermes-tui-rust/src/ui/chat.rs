@@ -227,7 +227,7 @@ impl ChatComponent {
     pub fn get_role_display(&self, role: MessageRole) -> &'static str {
         match role {
             MessageRole::User => " User ",
-            MessageRole::Assistant => " ≡ Kraken ",
+            MessageRole::Assistant => " ≡ Hermes ",
             MessageRole::System => " System ",
             MessageRole::Tool => " Tool ",
         }
@@ -816,7 +816,7 @@ impl ChatComponent {
                 ratatui::layout::Constraint::Min(1),     // Remaining space for info
             ])
             .split(inner_area);
-        // Left: Kraken ASCII Art
+        // Left: ASCII Art
         let hero_lines = [
             "⣴⣶⣤⡤⠦⣤⣀⣤⠆     ⣈⣭⣿⣶⣿⣦⣼⣆",
             " ⠉⠻⢿⣿⠿⣿⣿⣶⣦⠤⠄⡠⢾⣿⣿⡿⠋⠉⠉⠻⣿⣿⡛⣦",
@@ -842,7 +842,7 @@ impl ChatComponent {
         let offset = (time / 100) % 6;
 
         for (i, line) in hero_lines.iter().enumerate() {
-            // Kraken-style color gradient that animates
+            // Color gradient that animates
             let color_idx = (i + offset) % 6;
             let color = match color_idx {
                 0 => Color::Rgb(166, 226, 46),  // Neon Green
@@ -1015,7 +1015,7 @@ fn test_role_display() {
     let chat = ChatComponent::new(colors, false);
 
     assert_eq!(chat.get_role_display(MessageRole::User), " User ");
-    assert_eq!(chat.get_role_display(MessageRole::Assistant), " ≡ Kraken ");
+    assert_eq!(chat.get_role_display(MessageRole::Assistant), " ≡ Hermes ");
     assert_eq!(chat.get_role_display(MessageRole::System), " System ");
     assert_eq!(chat.get_role_display(MessageRole::Tool), " Tool ");
 }

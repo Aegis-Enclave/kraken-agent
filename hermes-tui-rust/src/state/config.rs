@@ -342,7 +342,6 @@ pub enum BuiltinTheme {
     Default,
     Dark,
     Light,
-    Kraken,
     Gruvbox,
 }
 
@@ -353,7 +352,6 @@ impl BuiltinTheme {
             Self::Default,
             Self::Dark,
             Self::Light,
-            Self::Kraken,
             Self::Gruvbox,
         ]
     }
@@ -364,7 +362,6 @@ impl BuiltinTheme {
             "default" => Some(Self::Default),
             "dark" => Some(Self::Dark),
             "light" => Some(Self::Light),
-            "kraken" => Some(Self::Kraken),
             "gruvbox" => Some(Self::Gruvbox),
             _ => None,
         }
@@ -376,7 +373,6 @@ impl BuiltinTheme {
             Self::Default => default_theme(),
             Self::Dark => dark_theme(),
             Self::Light => light_theme(),
-            Self::Kraken => kraken_theme(),
             Self::Gruvbox => gruvbox_theme(),
         }
     }
@@ -437,116 +433,6 @@ fn light_theme() -> ThemeConfig {
             code_text: SerialColor::Named("black".to_string()),
             border: SerialColor::Index(248),
             timestamp: SerialColor::Index(246),
-        },
-    }
-}
-
-fn kraken_theme() -> ThemeConfig {
-    ThemeConfig {
-        name: "kraken".to_string(),
-        colors: ThemeColors {
-            background: SerialColor::Rgb {
-                r: 39,
-                g: 40,
-                b: 34,
-            }, // #272822
-            text: SerialColor::Rgb {
-                r: 248,
-                g: 248,
-                b: 242,
-            }, // #F8F8F2
-            primary: SerialColor::Rgb {
-                r: 174,
-                g: 129,
-                b: 255,
-            }, // #AE81FF (Purple)
-            secondary: SerialColor::Rgb {
-                r: 102,
-                g: 217,
-                b: 239,
-            }, // #66D9EF (Cyan)
-            accent: SerialColor::Rgb {
-                r: 230,
-                g: 219,
-                b: 116,
-            }, // #E6DB74 (Yellow)
-            error: SerialColor::Rgb {
-                r: 249,
-                g: 38,
-                b: 114,
-            }, // #F92672 (Pink)
-            success: SerialColor::Rgb {
-                r: 166,
-                g: 226,
-                b: 46,
-            }, // #A6E22E (Green)
-            warning: SerialColor::Rgb {
-                r: 253,
-                g: 151,
-                b: 31,
-            }, // #FD971F (Orange)
-        },
-        chat: ChatColors {
-            user_bg: SerialColor::Rgb {
-                r: 73,
-                g: 72,
-                b: 62,
-            }, // #49483E
-            user_text: SerialColor::Rgb {
-                r: 248,
-                g: 248,
-                b: 242,
-            },
-            assistant_bg: SerialColor::Rgb {
-                r: 39,
-                g: 40,
-                b: 34,
-            }, // #272822
-            assistant_text: SerialColor::Rgb {
-                r: 248,
-                g: 248,
-                b: 242,
-            },
-            system_bg: SerialColor::Rgb {
-                r: 27,
-                g: 29,
-                b: 30,
-            }, // #1B1D1E
-            system_text: SerialColor::Rgb {
-                r: 117,
-                g: 113,
-                b: 94,
-            }, // #75715E
-            tool_bg: SerialColor::Rgb {
-                r: 39,
-                g: 40,
-                b: 34,
-            },
-            tool_text: SerialColor::Rgb {
-                r: 166,
-                g: 226,
-                b: 46,
-            },
-            code_bg: SerialColor::Rgb {
-                r: 27,
-                g: 29,
-                b: 30,
-            },
-            code_text: SerialColor::Rgb {
-                r: 248,
-                g: 248,
-                b: 242,
-            },
-            border: SerialColor::Rgb {
-                r: 174,
-                g: 129,
-                b: 255,
-            }, // #AE81FF
-            timestamp: SerialColor::Rgb {
-                r: 117,
-                g: 113,
-                b: 94,
-            },
         },
     }
 }

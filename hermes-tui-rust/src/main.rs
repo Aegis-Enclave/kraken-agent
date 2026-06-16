@@ -23,7 +23,7 @@ fn main() -> Result<()> {
     // Ensure nothing goes to stderr/stdout that could break Ratatui
     // (except what Ratatui itself handles)
 
-    info!("--- Kraken Agent TUI Session Start ---");
+    info!("--- Hermes TUI Session Start ---");
 
     // Create the app
     let mut app = App::new().context("Failed to initialize application")?;

@@ -1,7 +1,7 @@
 //! Banner module - ASCII logo and branding header
 //!
 //! This module provides the banner component for the TUI,
-//! featuring the Kraken ASCII logo and deep-sea styling.
+//! featuring the ASCII logo and deep-sea styling.
 
 use ratatui::{
     layout::{Alignment, Rect},

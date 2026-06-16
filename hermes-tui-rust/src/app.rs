@@ -160,7 +160,7 @@ impl App {
         .context("Failed to enter alternate screen mode and enable mouse/paste")?;
 
         // Set terminal title
-        execute!(io::stdout(), SetTitle("Kraken Agent (Rust)"))
+        execute!(io::stdout(), SetTitle("Hermes TUI (Rust)"))
             .context("Failed to set terminal title")?;
 
         // Initialize terminal with Crossterm backend
