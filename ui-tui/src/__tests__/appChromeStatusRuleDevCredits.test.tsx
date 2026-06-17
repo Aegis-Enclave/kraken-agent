@@ -42,6 +42,7 @@ const baseProps = {
   busy: false,
   cols: 100,
   cwdLabel: '~/repo',
+  line: 'top',
   liveSessionCount: 0,
   model: 'opus-4.8',
   sessionStartedAt: null,
@@ -50,19 +51,24 @@ const baseProps = {
   statusColor: DEFAULT_THEME.color.ok,
   t: DEFAULT_THEME,
   turnStartedAt: null,
-  usage: { context_max: 200_000, context_percent: 25, context_used: 50_000, total: 50_000 },
+  usage: { calls: 1, context_max: 200_000, context_percent: 25, context_used: 50_000, input: 50_000, output: 0, total: 50_000 },
   voiceLabel: ''
-}
+} as const
 
 describe('StatusRule dev-credits banner (HERMES_DEV_CREDITS on)', () => {
   it('keeps the dev-credits banner visible alongside a notice', () => {
-    const element = StatusRule({
+    const top = StatusRule({
       ...baseProps,
       notice: { key: 'credits.90', kind: 'sticky', level: 'warn', text: '⚠ 90% used' },
       usage: { ...baseProps.usage, dev_credits_spent_micros: 12_345 }
     })
+    const bottom = StatusRule({
+      ...baseProps,
+      line: 'bottom',
+      usage: { ...baseProps.usage, dev_credits_spent_micros: 12_345 }
+    })
 
-    const rendered = textContent(element)
+    const rendered = `${textContent(top)}\n${textContent(bottom)}`
 
     // The notice and the dev banner coexist …
     expect(rendered).toContain('⚠ 90% used')

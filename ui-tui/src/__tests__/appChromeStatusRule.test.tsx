@@ -93,6 +93,7 @@ const baseProps = {
   busy: false,
   cols: 100,
   cwdLabel: '~/repo',
+  line: 'top',
   liveSessionCount: 0,
   model: 'opus-4.8',
   sessionStartedAt: null,
@@ -101,9 +102,9 @@ const baseProps = {
   statusColor: DEFAULT_THEME.color.ok,
   t: DEFAULT_THEME,
   turnStartedAt: null,
-  usage: { context_max: 200_000, context_percent: 25, context_used: 50_000, total: 50_000 },
+  usage: { calls: 1, context_max: 200_000, context_percent: 25, context_used: 50_000, input: 50_000, output: 0, total: 50_000 },
   voiceLabel: ''
-}
+} as const
 
 describe('StatusRule session count click target', () => {
   it('makes the live session count itself clickable', () => {
@@ -113,6 +114,7 @@ describe('StatusRule session count click target', () => {
       busy: false,
       cols: 100,
       cwdLabel: '~/repo',
+      line: 'bottom',
       liveSessionCount: 1,
       model: 'kimi-k2.6',
       onSessionCountClick: openSwitcher,
@@ -139,6 +141,7 @@ describe('StatusRule session count click target', () => {
       busy: false,
       cols: 44,
       cwdLabel: '~/src/hermes-agent/apps/desktop (bb/tui-statusbar-responsive)',
+      line: 'top',
       liveSessionCount: 3,
       model: 'opus-4.8',
       onSessionCountClick: vi.fn(),
@@ -298,6 +301,7 @@ describe('StatusRule idle-since read-out', () => {
     const element = StatusRule({
       ...baseProps,
       lastTurnEndedAt: endedAt,
+      line: 'bottom',
       sessionStartedAt: Date.now() - 60_000
     })
 

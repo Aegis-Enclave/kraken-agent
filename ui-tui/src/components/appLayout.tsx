@@ -354,7 +354,7 @@ const StatusRulePane = memo(function StatusRulePane({
 }: Pick<AppLayoutProps, 'composer' | 'status'> & { at: 'bottom' | 'top' }) {
   const ui = useStore($uiState)
 
-  if (ui.statusBar !== at) {
+  if (ui.statusBar === 'off') {
     return null
   }
 
@@ -367,10 +367,12 @@ const StatusRulePane = memo(function StatusRulePane({
         cwdLabel={status.cwdLabel}
         indicatorStyle={ui.indicatorStyle}
         lastTurnEndedAt={status.lastTurnEndedAt}
+        line={at}
         liveSessionCount={ui.liveSessionCount}
         model={ui.info?.model ?? ''}
         modelFast={ui.info?.fast || ui.info?.service_tier === 'priority'}
         modelReasoningEffort={ui.info?.reasoning_effort}
+        showReasoning={ui.showReasoning}
         notice={ui.notice}
         onSessionCountClick={() => patchOverlayState({ sessions: true })}
         sessionStartedAt={status.sessionStartedAt}
