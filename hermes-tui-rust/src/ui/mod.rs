@@ -8,6 +8,7 @@ pub mod chat;
 pub mod completions;
 pub mod composer;
 pub mod dashboard;
+pub mod effects;
 pub mod gif;
 pub mod hashline;
 pub mod ide;
