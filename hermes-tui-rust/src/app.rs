@@ -22,7 +22,6 @@ use ratatui::{
     Terminal,
 };
 use std::io::{self, Stdout, Write};
-use std::time::Duration;
 
 use crate::ui::cards::{CardManager, ToolCardData, ToolStatus};
 use crate::ui::hashline::HashlineViewer;
