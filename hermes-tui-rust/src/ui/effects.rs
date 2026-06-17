@@ -1,7 +1,8 @@
 //! Aetheric Shaders — Protocol-Linked DSL Effects (Phase 4.2)
 //!
-//! Uses `tachyonfx` to apply post-processing effects to the terminal frame
-//! after all standard widget rendering is complete.
+//! Manages a `tachyonfx::EffectManager` for lifecycle-tracking effects
+//! (coalesce on LLM stream, HSL shift on tool execution). All post-processing
+//! operates on a shim `Buffer` via the public `apply` method.
 //!
 //! ## Effect Pipeline
 //!
@@ -13,13 +14,10 @@
 //! All effects are gated behind [`set_low_motion`] so users on
 //! resource-constrained terminals can opt out with `--low-motion`.
 
-use std::time::Duration;
-
-use ratatui::{buffer::Buffer, layout::Rect, style::Color};
-use tachyonfx::{self as fx, Effect, EffectManager, EffectTimer, Interpolation};
+use ratatui::{style::Color};
+use tachyonfx::{self as txfx, EffectManager, EffectTimer, Interpolation};
 
 /// Global gate for low-motion mode.
-/// Set to `true` to skip all post-processing effects.
 static mut LOW_MOTION: bool = false;
 
 /// Enable or disable low-motion mode.
@@ -28,11 +26,15 @@ pub fn set_low_motion(enabled: bool) {
 }
 
 /// Whether effects are currently allowed.
+#[inline]
 fn effects_enabled() -> bool {
     !unsafe { LOW_MOTION }
 }
 
 /// Shader state tied to the TUI event loop.
+///
+/// Uses a shim buffer from `ratatui_core` (the same crate tachyonfx depends on)
+/// to avoid type mismatches with ratatui 0.28's own `Buffer`.
 pub struct ShaderState {
     pub manager: EffectManager<()>,
 }
@@ -57,7 +59,7 @@ impl ShaderState {
             return;
         }
         self.manager
-            .add_effect(fx::coalesce(EffectTimer::from_ms(300, Interpolation::Linear)));
+            .add_effect(txfx::fx::coalesce(EffectTimer::from_ms(300, Interpolation::Linear)));
     }
 
     /// Trigger the tool-execution HSL shift effect (400ms).
@@ -65,44 +67,46 @@ impl ShaderState {
         if !effects_enabled() {
             return;
         }
-        self.manager.add_effect(fx::hsl_shift(EffectTimer::from_ms(
-            400,
-            Interpolation::SineInOut,
-        )));
+        self.manager.add_effect(txfx::fx::hsl_shift(
+            Some([60.0, 10.0, 15.0]),
+            None,
+            EffectTimer::from_ms(400, Interpolation::SineInOut),
+        ));
     }
 
-    /// Advance all active effects by `dt`.
-    ///
-    /// Must be called once per animation frame with the frame-to-frame delta.
-    pub fn advance(&mut self, dt: Duration) {
-        if !effects_enabled() {
-            self.manager = EffectManager::default();
+    /// Advance effect timers (called from the demand-driven ticker).
+    pub fn advance(&mut self) {
+        if !effects_enabled() || !self.manager.is_running() {
             return;
         }
-        // empty buffer to advance timers — actual rendering happens in apply()
-        let mut buf = Buffer::empty(Rect::new(0, 0, 0, 0));
-        self.manager.process_effects(tachyonfx::Duration::from_millis(dt.as_millis() as u32), &mut buf, Rect::default());
+        // Use ratatui_core types directly (tachyonfx's dependency)
+        let mut buf = ratatui_core::buffer::Buffer::empty(
+            ratatui_core::layout::Rect::new(0, 0, 0, 0),
+        );
+        self.manager.process_effects(
+            txfx::Duration::from_millis(16),
+            &mut buf,
+            ratatui_core::layout::Rect::default(),
+        );
     }
 
     /// Whether any effects are currently running.
+    #[inline]
     pub fn is_running(&self) -> bool {
         self.manager.is_running()
     }
 
     /// Apply the current effects to the frame buffer.
-    pub fn apply(&mut self, buf: &mut Buffer, area: Rect, dt: Duration) {
-        if !effects_enabled() {
+    pub fn apply(&mut self, buf: &mut ratatui_core::buffer::Buffer, area: ratatui_core::layout::Rect) {
+        if !effects_enabled() || !self.manager.is_running() {
             return;
         }
         self.manager
-            .process_effects(tachyonfx::Duration::from_millis(dt.as_millis() as u32), buf, area);
+            .process_effects(txfx::Duration::from_millis(16), buf, area);
     }
 }
 
-/// Compute two per-frame colour offsets modulated by a sine wave at `phase`.
-///
-/// Returns `(primary, secondary)` colours that drift subtly to give the
-/// wave footer a breathing appearance without allocating new styles.
+/// Sinusoidal colour offsets for the wave footer.
 pub fn wave_palette_shift(phase: f64) -> (Color, Color) {
     let r = (128.0 + (phase * 0.7).sin() * 40.0) as u8;
     let g = (180.0 + (phase * 1.3).cos() * 30.0) as u8;
@@ -135,8 +139,8 @@ mod tests {
 
     #[test]
     fn test_wave_palette_shift_is_smooth() {
-        let (a, _b) = wave_palette_shift(0.0);
-        let (c, _d) = wave_palette_shift(1.0);
+        let (a, _) = wave_palette_shift(0.0);
+        let (c, _) = wave_palette_shift(1.0);
         assert_ne!(format!("{a:?}"), format!("{c:?}"));
     }
 

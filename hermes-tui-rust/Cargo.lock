@@ -1059,6 +1059,7 @@ dependencies = [
  "once_cell",
  "pulldown-cmark",
  "ratatui 0.28.1",
+ "ratatui-core",
  "ropey",
  "serde",
  "serde_json",
