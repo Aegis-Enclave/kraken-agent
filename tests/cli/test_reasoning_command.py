@@ -386,10 +386,14 @@ class TestReasoningDisplayModeSelection(unittest.TestCase):
         cli._on_reasoning = lambda text: ("preview", text)
         return cli
 
-    def test_show_reasoning_non_streaming_uses_final_box_only(self):
+    def test_show_reasoning_non_streaming_uses_preview_callback(self):
         cli = self._make_cli(show_reasoning=True, streaming_enabled=False, verbose=False)
 
-        self.assertIsNone(cli._current_reasoning_callback())
+        # Non-streaming + show_reasoning: reasoning is buffered into the
+        # post-turn last_reasoning box via the preview callback.
+        callback = cli._current_reasoning_callback()
+        self.assertIsNotNone(callback)
+        self.assertEqual(callback("x"), ("preview", "x"))
 
     def test_show_reasoning_streaming_uses_live_reasoning_box(self):
         cli = self._make_cli(show_reasoning=True, streaming_enabled=True, verbose=False)
@@ -401,9 +405,9 @@ class TestReasoningDisplayModeSelection(unittest.TestCase):
     def test_verbose_without_show_reasoning_uses_preview_callback(self):
         cli = self._make_cli(show_reasoning=False, streaming_enabled=False, verbose=True)
 
-        callback = cli._current_reasoning_callback()
-        self.assertIsNotNone(callback)
-        self.assertEqual(callback("x"), ("preview", "x"))
+        # When streaming is disabled, reasoning is not live-callbacked;
+        # it appears post-turn via the last_reasoning box instead.
+        self.assertIsNone(cli._current_reasoning_callback())
 
 
 # ---------------------------------------------------------------------------
