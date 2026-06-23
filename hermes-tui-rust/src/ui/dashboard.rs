@@ -1,5 +1,4 @@
 use crate::state::config::ThemeColors;
-use crate::ui::gif::AnimatedGif;
 use ratatui::{layout::Rect, Frame};
 
 pub struct DashboardView;
@@ -8,7 +7,6 @@ impl DashboardView {
     pub fn render(
         frame: &mut Frame,
         area: Rect,
-        gif: Option<&mut AnimatedGif>,
         colors: &ThemeColors,
         animation_frame: u64,
         is_running: bool,
@@ -105,17 +103,11 @@ impl DashboardView {
         let left_chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
-                Constraint::Length(10), // GIF
+                Constraint::Length(10), // Spacer (was GIF area)
                 Constraint::Min(20),    // Telemetry
             ])
             .spacing(1)
             .split(content_chunks[0]);
-
-        if let Some(gif_data) = gif {
-            let frame_str = gif_data.get_frame(time_ms(), 80);
-            let gif_para = Paragraph::new(frame_str).alignment(Alignment::Center);
-            frame.render_widget(gif_para, left_chunks[0]);
-        }
 
         // Telemetry
         let cpu = cpu_usage as u16;
@@ -359,10 +351,4 @@ impl DashboardView {
             right_chunks[2],
         );
     }
-}
-fn time_ms() -> u128 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
-        .as_millis()
 }

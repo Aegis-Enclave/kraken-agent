@@ -6,7 +6,6 @@ pub mod ansi;
 pub mod clipboard;
 pub mod cursor;
 pub mod markdown;
-pub mod rope;
 pub mod sixel;
 pub mod syntax;
 pub mod text;

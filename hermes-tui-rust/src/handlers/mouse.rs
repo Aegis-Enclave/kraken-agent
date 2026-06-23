@@ -38,19 +38,20 @@ impl MouseContext {
             MouseEventKind::Up(button) => {
                 self.pressed_buttons.retain(|&b| b != button);
                 self.is_dragging = false;
-                self.drag_start = None;
             }
-            MouseEventKind::Drag(_) => {
+            MouseEventKind::Drag(button) => {
+                if !self.pressed_buttons.contains(&button) {
+                    self.pressed_buttons.push(button);
+                }
                 self.is_dragging = true;
             }
-            MouseEventKind::Moved => {
-                if !self.pressed_buttons.is_empty() {
-                    self.is_dragging = true;
-                }
-            }
-            MouseEventKind::ScrollDown | MouseEventKind::ScrollUp => {}
             _ => {}
         }
+    }
+
+    #[must_use]
+    pub fn position(&self) -> (u16, u16) {
+        self.position
     }
 
     #[must_use]
@@ -59,51 +60,33 @@ impl MouseContext {
     }
 
     #[must_use]
-    pub fn any_button_pressed(&self) -> bool {
-        !self.pressed_buttons.is_empty()
-    }
-
-    #[must_use]
-    pub fn is_dragging(&self) -> bool {
-        self.is_dragging
-    }
-    #[must_use]
     pub fn drag_start(&self) -> Option<(u16, u16)> {
         self.drag_start
     }
-    #[must_use]
-    pub fn position(&self) -> (u16, u16) {
-        self.position
-    }
 
     #[must_use]
-    pub fn is_in_rect(&self, x: u16, y: u16, width: u16, height: u16) -> bool {
-        let (cx, cy) = self.position;
-        cx >= x && cx < x + width && cy >= y && cy < y + height
-    }
-
-    pub fn check_double_click(&mut self, event: &MouseEvent) -> bool {
-        let parsed = ParsedMouseEvent::from(event);
-        let now = std::time::Instant::now();
-
-        if let (Some((last_x, last_y)), Some(last_time)) = (self.last_click, self.last_click_time) {
-            let dx = (parsed.column as i16 - last_x as i16).abs();
-            let dy = (parsed.row as i16 - last_y as i16).abs();
-            let elapsed = now.duration_since(last_time);
-
-            if dx <= 2 && dy <= 2 && elapsed.as_millis() < 500 {
-                return true;
+    pub fn check_double_click(&self, event: &MouseEvent) -> bool {
+        if let MouseEventKind::Down(button) = event.kind {
+            if button == MouseButton::Left {
+                if let (Some(last_pos), Some(last_time)) = (self.last_click, self.last_click_time) {
+                    let parsed = ParsedMouseEvent::from(event);
+                    let is_same_position = last_pos == (parsed.column, parsed.row);
+                    let is_fast = last_time.elapsed() < std::time::Duration::from_millis(300);
+                    return is_same_position && is_fast;
+                }
             }
         }
         false
     }
 
-    pub fn reset(&mut self) {
-        *self = Self::default();
+    pub fn clear(&mut self) {
+        self.pressed_buttons.clear();
+        self.is_dragging = false;
+        self.drag_start = None;
     }
 }
 
-/// Mouse handler for chat area
+/// Handles mouse events within the chat area
 #[derive(Debug, Default)]
 pub struct ChatMouseHandler {
     click_padding: u16,
@@ -167,22 +150,14 @@ impl ChatMouseHandler {
     }
 }
 
-/// Mouse handler for input composer
+/// Handles mouse events within the input area
 #[derive(Debug, Default)]
-pub struct InputMouseHandler {
-    cursor_width: u16,
-}
+pub struct InputMouseHandler;
 
 impl InputMouseHandler {
     #[must_use]
     pub fn new() -> Self {
-        Self::default()
-    }
-    #[must_use]
-    pub fn with_cursor_width(width: u16) -> Self {
-        Self {
-            cursor_width: width,
-        }
+        Self
     }
 
     #[must_use]
@@ -193,88 +168,54 @@ impl InputMouseHandler {
         _text_length: usize,
     ) -> (InputMouseAction, Option<usize>) {
         let parsed = ParsedMouseEvent::from(event);
-        let (x, y, width, _height) = input_area;
+        let (x, _y, width, _height) = input_area;
 
-        if !self.is_in_area(parsed.column, parsed.row, x, y, width, 1) {
+        if parsed.column < x || parsed.column >= x + width {
             return (InputMouseAction::None, None);
         }
 
         match event.kind {
             MouseEventKind::Down(MouseButton::Left) => {
-                let relative_x = parsed.column.saturating_sub(x);
-                let cursor_pos = relative_x as usize;
+                let cursor_pos = (parsed.column - x) as usize;
                 (InputMouseAction::SetCursor(cursor_pos), Some(cursor_pos))
             }
             MouseEventKind::Down(MouseButton::Right) => {
-                let relative_x = parsed.column.saturating_sub(x);
-                let cursor_pos = relative_x as usize;
-                (
-                    InputMouseAction::ContextMenuAt(cursor_pos),
-                    Some(cursor_pos),
-                )
+                let cursor_pos = (parsed.column - x) as usize;
+                (InputMouseAction::ContextMenuAt(cursor_pos), Some(cursor_pos))
             }
             MouseEventKind::Drag(MouseButton::Left) => {
-                let relative_x = parsed.column.saturating_sub(x);
-                let cursor_pos = relative_x as usize;
+                let cursor_pos = (parsed.column - x) as usize;
                 (InputMouseAction::DragCursor(cursor_pos), Some(cursor_pos))
             }
             _ => (InputMouseAction::None, None),
         }
     }
-
-    fn is_in_area(&self, col: u16, row: u16, x: u16, y: u16, width: u16, height: u16) -> bool {
-        col >= x && col < x + width && row >= y && row < y + height
-    }
-
-    #[must_use]
-    pub fn cursor_width(&self) -> u16 {
-        self.cursor_width
-    }
 }
 
-/// Toolbar button definition
+/// Toolbar button configuration
 #[derive(Debug, Clone)]
 pub struct ToolbarButton {
     pub id: String,
-    pub text: String,
-    pub x: u16,
-    pub y: u16,
-    pub width: u16,
-    pub enabled: bool,
+    pub label: String,
+    pub area: Option<(u16, u16, u16, u16)>,
 }
 
 impl ToolbarButton {
-    pub fn new(id: impl Into<String>, text: impl Into<String>, x: u16, y: u16, width: u16) -> Self {
+    #[must_use]
+    pub fn new(id: &str, label: &str) -> Self {
         Self {
-            id: id.into(),
-            text: text.into(),
-            x,
-            y,
-            width,
-            enabled: true,
+            id: id.to_string(),
+            label: label.to_string(),
+            area: None,
         }
     }
 
-    pub fn with_enabled(
-        id: impl Into<String>,
-        text: impl Into<String>,
-        x: u16,
-        y: u16,
-        width: u16,
-        enabled: bool,
-    ) -> Self {
-        Self {
-            id: id.into(),
-            text: text.into(),
-            x,
-            y,
-            width,
-            enabled,
-        }
+    pub fn set_area(&mut self, x: u16, y: u16, width: u16, height: u16) {
+        self.area = Some((x, y, width, height));
     }
 }
 
-/// Mouse handler for toolbar
+/// Handles mouse events within the toolbar area
 #[derive(Debug, Default)]
 pub struct ToolbarMouseHandler {
     buttons: Vec<ToolbarButton>,
@@ -285,6 +226,11 @@ impl ToolbarMouseHandler {
     pub fn new() -> Self {
         Self::default()
     }
+
+    pub fn set_buttons(&mut self, buttons: Vec<ToolbarButton>) {
+        self.buttons = buttons;
+    }
+
     pub fn add_button(&mut self, button: ToolbarButton) {
         self.buttons.push(button);
     }
@@ -294,18 +240,21 @@ impl ToolbarMouseHandler {
         let parsed = ParsedMouseEvent::from(event);
 
         for button in &self.buttons {
-            if parsed.column >= button.x
-                && parsed.column < button.x + button.width
-                && parsed.row == button.y
-            {
-                match event.kind {
-                    MouseEventKind::Down(MouseButton::Left) => {
-                        return ToolbarMouseAction::ButtonPress(button.id.clone());
-                    }
-                    MouseEventKind::Up(MouseButton::Left) => {
-                        return ToolbarMouseAction::ButtonRelease(button.id.clone());
-                    }
-                    _ => {}
+            if let Some((x, y, width, height)) = button.area {
+                if parsed.column >= x
+                    && parsed.column < x + width
+                    && parsed.row >= y
+                    && parsed.row < y + height
+                {
+                    return match event.kind {
+                        MouseEventKind::Down(MouseButton::Left) => {
+                            ToolbarMouseAction::ButtonPress(button.id.clone())
+                        }
+                        MouseEventKind::Up(MouseButton::Left) => {
+                            ToolbarMouseAction::ButtonRelease(button.id.clone())
+                        }
+                        _ => ToolbarMouseAction::None,
+                    };
                 }
             }
         }
@@ -344,80 +293,6 @@ pub enum ToolbarMouseAction {
     ButtonPress(String),
     ButtonRelease(String),
     None,
-}
-
-/// Swipe direction
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SwipeDirection {
-    Up,
-    Down,
-    Left,
-    Right,
-}
-
-/// Mouse gesture recognizer
-#[derive(Debug, Default)]
-pub struct MouseGestureRecognizer {
-    swipe_threshold: u16,
-    long_press_duration: std::time::Duration,
-    gesture_start: Option<(u16, u16)>,
-    gesture_start_time: Option<std::time::Instant>,
-}
-
-impl MouseGestureRecognizer {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-    #[must_use]
-    pub fn with_thresholds(swipe_threshold: u16, long_press_duration: std::time::Duration) -> Self {
-        Self {
-            swipe_threshold,
-            long_press_duration,
-            gesture_start: None,
-            gesture_start_time: None,
-        }
-    }
-
-    pub fn start_gesture(&mut self, x: u16, y: u16) {
-        self.gesture_start = Some((x, y));
-        self.gesture_start_time = Some(std::time::Instant::now());
-    }
-
-    pub fn end_gesture(&mut self) {
-        self.gesture_start = None;
-        self.gesture_start_time = None;
-    }
-
-    #[must_use]
-    pub fn check_long_press(&self) -> bool {
-        self.gesture_start_time
-            .is_some_and(|start| start.elapsed() >= self.long_press_duration)
-    }
-
-    #[must_use]
-    pub fn check_swipe(&self, current_x: u16, current_y: u16) -> Option<SwipeDirection> {
-        if let Some((start_x, start_y)) = self.gesture_start {
-            let dx = (current_x as i16 - start_x as i16).abs();
-            let dy = (current_y as i16 - start_y as i16).abs();
-
-            if dx >= self.swipe_threshold as i16 {
-                return Some(if current_x > start_x {
-                    SwipeDirection::Right
-                } else {
-                    SwipeDirection::Left
-                });
-            }
-            if dy >= self.swipe_threshold as i16 {
-                return Some(if current_y > start_y {
-                    SwipeDirection::Down
-                } else {
-                    SwipeDirection::Up
-                });
-            }
-        }
-        None
-    }
 }
 
 #[cfg(test)]
@@ -503,15 +378,5 @@ mod tests {
             }
             _ => panic!("Expected SetCursor"),
         }
-    }
-
-    #[test]
-    fn test_gesture_recognizer() {
-        let mut recognizer =
-            MouseGestureRecognizer::with_thresholds(10, std::time::Duration::from_millis(500));
-        recognizer.start_gesture(10, 10);
-        assert!(!recognizer.check_long_press());
-        assert_eq!(recognizer.check_swipe(50, 10), Some(SwipeDirection::Right));
-        recognizer.end_gesture();
     }
 }

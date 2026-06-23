@@ -136,7 +136,6 @@ pub struct App {
     /// Current provider name from the gateway session info
     current_provider: Option<String>,
     /// Optional animated GIF for the dashboard
-    bebop_gif: Option<crate::ui::gif::AnimatedGif>,
     /// Current view (Dashboard, IDE, Kanban, Chat)
     current_view: ViewState,
     /// Previous view (for transition animations)
@@ -161,10 +160,6 @@ pub struct App {
     animation_frame: u64,
     /// Sine-wave loading footer ticker (Aetheric Shader, Phase 4)
     wave_ticker: crate::ui::wave::WaveTicker,
-    /// Global aetheric shader state (Phase 4.2)
-    effects: crate::ui::effects::EffectManager,
-    /// Last frame time (for smooth animation delta)
-    last_frame_time: std::time::Instant,
     /// Clipboard backend (arboard or OSC 52 fallback).
     clipboard: Box<dyn Clipboard>,
     /// Gateway-reported capabilities for the empty-state landing page.
@@ -255,7 +250,6 @@ impl App {
             mouse_context: MouseContext::new(),
             current_provider: None,
             current_model: None,
-            bebop_gif: crate::ui::gif::AnimatedGif::new(include_bytes!("../bebop.gif"), 100).ok(),
             current_view: ViewState::Dashboard,
             previous_view: None,
             transition_progress: 1.0,
@@ -268,8 +262,6 @@ impl App {
             focus_pane: FocusPane::default(),
             animation_frame: 0,
             wave_ticker: crate::ui::wave::WaveTicker::new(),
-            effects: crate::ui::effects::EffectManager::new(),
-            last_frame_time: std::time::Instant::now(),
             clipboard: Self::make_clipboard(),
             capabilities: Capabilities::default(),
             last_completion_query: None,
@@ -724,7 +716,6 @@ impl App {
             // Advance or stop the sine-wave loading footer (Phase 4)
             if self.thinking {
                 self.wave_ticker.advance();
-                self.effects.advance();
             }
 
             // Increment animation frame for animated borders
@@ -2212,7 +2203,6 @@ impl App {
         );
 
         self.thinking = true;
-        self.effects.trigger_tool_effect();
 
         // Create a tool card for this tool call with proper call_id
         let data = ToolCardData::running(&tool_start.tool_name)
@@ -2390,7 +2380,6 @@ impl App {
 
     fn handle_message_delta(&mut self, delta: MessageDelta) -> Result<()> {
         debug!("Message delta: text='{}'", delta.text);
-        self.effects.trigger_stream_effect();
         let session_id = delta.session_id.clone().unwrap_or_default();
         let message_id = format!("{session_id}:streaming");
         // Track the streaming message_id for reasoning updates and reset the
@@ -2501,7 +2490,6 @@ impl App {
             return;
         }
         let reasoning_snapshot = self.streaming_reasoning.clone();
-        self.effects.trigger_stream_effect();
         // 1) Update the messages history.
         if let Some(idx) = self
             .messages()
@@ -2782,7 +2770,6 @@ impl App {
             self.previous_view = Some(self.current_view);
             self.current_view = new_view;
             self.transition_progress = 0.0;
-            self.effects.trigger_view_transition();
             crate::engine::animation_start();
             info!("Switched view to {:?}", new_view);
         }
@@ -2895,7 +2882,6 @@ impl App {
             ref mut chat_component,
             ref mut chat_state,
             ref mut ide_state,
-            ref mut bebop_gif,
             current_view,
             previous_view: _,
             ref mut transition_progress,
@@ -2904,7 +2890,6 @@ impl App {
             focus_pane,
             animation_frame,
             ref wave_ticker,
-            ref mut effects,
             ..
         } = *self;
 
@@ -2919,10 +2904,6 @@ impl App {
 
         let wave_tick = wave_ticker.current_tick();
         let wave_active = wave_ticker.is_active();
-
-        let delta = self.last_frame_time.elapsed();
-        self.last_frame_time = std::time::Instant::now();
-        let delta_ms = delta.as_millis() as u64;
 
         crate::engine::draw_sync(terminal, |frame| {
             use ratatui::layout::Alignment;
@@ -2988,7 +2969,6 @@ impl App {
                     crate::ui::dashboard::DashboardView::render(
                         frame,
                         main_area,
-                        bebop_gif.as_mut(),
                         &config.theme.colors,
                         animation_frame,
                         self.thinking,
@@ -3217,10 +3197,6 @@ impl App {
             if self.show_help {
                 crate::ui::help::HelpView::render(frame, overlay_area);
             }
-
-            // Apply global aetheric shaders (Phase 4.2)
-            let area = frame.area();
-            effects.apply(frame.buffer_mut(), area, delta_ms);
         })?;
 
         Ok(())
@@ -3561,7 +3537,6 @@ mod tests {
             mouse_context: MouseContext::new(),
             current_model: None,
             current_provider: None,
-            bebop_gif: None,
             current_view: ViewState::Dashboard,
             previous_view: None,
             transition_progress: 1.0,
@@ -3574,8 +3549,6 @@ mod tests {
             focus_pane: FocusPane::default(),
             animation_frame: 0,
             wave_ticker: crate::ui::wave::WaveTicker::new(),
-            effects: crate::ui::effects::EffectManager::new(),
-            last_frame_time: std::time::Instant::now(),
             clipboard: Box::new(crate::utils::clipboard::MockClipboard::new()),
             capabilities: Capabilities::default(),
             last_completion_query: None,
@@ -3630,7 +3603,6 @@ mod tests {
             mouse_context: MouseContext::new(),
             current_model: None,
             current_provider: None,
-            bebop_gif: None,
             current_view: ViewState::Dashboard,
             previous_view: None,
             transition_progress: 1.0,
@@ -3643,8 +3615,6 @@ mod tests {
             focus_pane: FocusPane::default(),
             animation_frame: 0,
             wave_ticker: crate::ui::wave::WaveTicker::new(),
-            effects: crate::ui::effects::EffectManager::new(),
-            last_frame_time: std::time::Instant::now(),
             clipboard: Box::new(crate::utils::clipboard::MockClipboard::new()),
             capabilities: Capabilities::default(),
             last_completion_query: None,

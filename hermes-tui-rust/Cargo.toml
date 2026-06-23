@@ -46,21 +46,9 @@ home = "0.5"  # For config directory detection
 # For syntax highlighting in code blocks
 syntect = { version = "5.0", default-features = false, features = ["default-fancy"] }
 
-# Fast syntax highlighting (Phase 2.2): thread-local palette cache
-once_cell = "1.20"
-
-# Rope data structure for editor (Phase 3.1)
-ropey = { version = "2.0.0-beta.1", features = ["metric_chars"] }
-
-# TachyonFX shader effects (Phase 4.2)
-tachyonfx = "0.25.0"
-ratatui-core = "0.1"   # Same version tachyonfx uses for buffer types
-
 # For fuzzy matching in completions
-fuzzy-matcher = "0.3"
 
 # For better text wrapping
-textwrap = { version = "0.16", features = ["unicode-width"] }
 
 # Markdown parsing for chat rendering
 pulldown-cmark = "0.12"
