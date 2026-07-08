@@ -1982,6 +1982,56 @@ def _resolve_tui_heap_mb(default_mb: int = 8192) -> int:
     return max(1536, sized) if limit_mb > 2048 else sized
 
 
+def _resolve_hermes_python() -> str:
+    """Pick the Python interpreter the spawned TUI gateway should use.
+
+    The gateway (``tui_gateway.entry``) and its workers run as a child of the
+    Node TUI process, which resolves the interpreter via ``HERMES_PYTHON`` /
+    ``PYTHON`` env vars and then the project venv (see ``gatewayClient.ts``).
+    This mirrors that priority but *corrects* for a broken launcher: when
+    ``hermes`` is invoked through a shebang pointing at a system interpreter
+    outside the supported ``requires-python`` range (e.g. system
+    ``/usr/bin/python3`` == 3.14 while the project targets ``<3.14``), using
+    ``sys.executable`` would force the gateway onto an unsupported interpreter
+    and break stdlib-coupled code such as ``DaemonThreadPoolExecutor``.
+
+    Resolution order:
+      1. An active venv (``VIRTUAL_ENV``) — the normal ``pip install`` case.
+      2. ``.venv`` / ``venv`` next to the project root.
+      3. ``sys.executable`` as a last resort.
+
+    We only *prefer* a venv interpreter when it exists and reports a version
+    inside the supported window; otherwise we fall back to ``sys.executable``
+    so we never substitute an interpreter we can't trust.
+    """
+    import subprocess
+
+    def _major_ok(path: str) -> bool:
+        try:
+            out = subprocess.run(
+                [path, "-c", "import sys;print(sys.version_info[:2])"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if out.returncode != 0:
+                return False
+            major, minor = eval(out.stdout.strip())
+            return (major, minor) < (3, 14)
+        except Exception:
+            return False
+
+    candidates = [
+        os.path.join(os.environ.get("VIRTUAL_ENV", ""), "bin", "python3"),
+        str(PROJECT_ROOT / ".venv" / "bin" / "python3"),
+        str(PROJECT_ROOT / "venv" / "bin" / "python3"),
+    ]
+    for cand in candidates:
+        if cand and os.path.exists(cand) and _major_ok(cand):
+            return cand
+    return sys.executable
+
+
 def _launch_tui(
     resume_session_id: Optional[str] = None,
     tui_dev: bool = False,
@@ -2018,7 +2068,7 @@ def _launch_tui(
     env["HERMES_PYTHON_SRC_ROOT"] = os.environ.get(
         "HERMES_PYTHON_SRC_ROOT", str(PROJECT_ROOT)
     )
-    env.setdefault("HERMES_PYTHON", sys.executable)
+    env.setdefault("HERMES_PYTHON", _resolve_hermes_python())
     env.setdefault("HERMES_CWD", os.getcwd())
     env.setdefault("NODE_ENV", "development" if tui_dev else "production")
 
@@ -2257,8 +2307,8 @@ def _launch_tui_rust(
     env["HERMES_PYTHON_SRC_ROOT"] = os.environ.get(
         "HERMES_PYTHON_SRC_ROOT", str(PROJECT_ROOT)
     )
-    
-    env.setdefault("HERMES_PYTHON", sys.executable)
+
+    env.setdefault("HERMES_PYTHON", _resolve_hermes_python())
     env.setdefault("HERMES_CWD", os.getcwd())
     
     if model:
