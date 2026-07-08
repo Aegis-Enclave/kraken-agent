@@ -34,17 +34,6 @@ export interface ThemeColors {
   shellDollar: string
 }
 
-export const KRAKEN_BORDER = {
-  topLeft: '▛',
-  top: '▀',
-  topRight: '▜',
-  left: '▌',
-  bottomLeft: '▙',
-  bottom: '▄',
-  bottomRight: '▟',
-  right: '▐'
-} as const;
-
 export interface ThemeBrand {
   name: string
   icon: string
@@ -264,36 +253,40 @@ const cleanPromptSymbol = (s: string | undefined, fallback: string) => {
 
 export const DARK_THEME: Theme = {
   color: {
-    primary: '#E0E0E0',
-    accent: '#C0C0C0',
-    border: '#555555',
-    text: '#F0F0F0',
-    muted: '#9E9E9E',
+    primary: '#FFD700',
+    accent: '#FFBF00',
+    border: '#CD7F32',
+    text: '#FFF8DC',
+    muted: '#CC9B1F',
+    // Bumped from the old `#B8860B` darkgoldenrod (~53% luminance) which
+    // read as barely-visible on dark terminals for long body text.  The
+    // new value sits ~60% luminance — readable without losing the "muted /
+    // secondary" semantic.  Field labels still use `label` (65%) which
+    // stays brighter so hierarchy holds.
+    completionBg: '#1a1a2e',
+    completionCurrentBg: '#333355',
+    completionMetaBg: '#1a1a2e',
+    completionMetaCurrentBg: '#333355',
 
-    completionBg: '#111111',
-    completionCurrentBg: '#2a2a2a',
-    completionMetaBg: '#111111',
-    completionMetaCurrentBg: '#2a2a2a',
-
-    // Labels stay one step above muted so hierarchy is clear without
-    // being as dark as the old #888888.
-    label: '#BDBDBD',
+    label: '#DAA520',
     ok: '#4caf50',
     error: '#ef5350',
     warn: '#ffa726',
 
-    prompt: '#F0F0F0',
-    // Session labels track muted so dim text is uniform across the UI.
-    sessionLabel: '#9E9E9E',
-    sessionBorder: '#9E9E9E',
+    prompt: '#FFF8DC',
+    // sessionLabel/sessionBorder intentionally track the `dim` value — they
+    // are "same role, same colour" by design.  fromSkin's banner_dim fallback
+    // relies on this pairing (#11300).
+    sessionLabel: '#CC9B1F',
+    sessionBorder: '#CC9B1F',
 
-    statusBg: '#111111',
-    statusFg: '#D0D0D0',
+    statusBg: '#1a1a2e',
+    statusFg: '#C0C0C0',
     statusGood: '#8FBC8F',
-    statusWarn: '#C0C0C0',
+    statusWarn: '#FFD700',
     statusBad: '#FF8C00',
     statusCritical: '#FF6B6B',
-    selectionBg: '#333333',
+    selectionBg: '#3a3a55',
 
     diffAdded: 'rgb(220,255,220)',
     diffRemoved: 'rgb(255,220,220)',

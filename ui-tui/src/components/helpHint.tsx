@@ -1,7 +1,7 @@
 import { Box, Text } from '@hermes/ink'
 
 import { HOTKEYS } from '../content/hotkeys.js'
-import { KRAKEN_BORDER, type Theme } from '../theme.js'
+import type { Theme } from '../theme.js'
 
 const COMMON_COMMANDS: [string, string][] = [
   ['/help', 'full list of commands + hotkeys'],
@@ -24,7 +24,7 @@ export function HelpHint({ t }: { t: Theme }) {
       <Box
         alignSelf="flex-start"
         borderColor={t.color.primary}
-        borderStyle={KRAKEN_BORDER}
+        borderStyle="round"
         flexDirection="column"
         marginBottom={1}
         opaque

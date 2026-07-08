@@ -14,7 +14,7 @@ import { stickyPromptFromViewport } from '../domain/viewport.js'
 import { buildSubagentTree, treeTotals, widthByDepth } from '../lib/subagentTree.js'
 import { fmtK } from '../lib/text.js'
 import { useScrollbarSnapshot, useViewportSnapshot } from '../lib/viewportStore.js'
-import { KRAKEN_BORDER, type Theme } from '../theme.js'
+import type { Theme } from '../theme.js'
 import type { Msg, Usage } from '../types.js'
 
 const FACE_TICK_MS = 2500
@@ -248,9 +248,7 @@ export interface StatusBarSegments {
   bg: boolean
   compactCtx: boolean
   compressions: boolean
-  cost: boolean
   duration: boolean
-  reasoning: boolean
   subagents: boolean
   voice: boolean
 }
@@ -262,12 +260,10 @@ export function statusBarSegments(cols: number): StatusBarSegments {
     compactCtx: w < 72,
     bar: w >= 72,
     duration: w >= 76,
-    reasoning: w >= 78,
     compressions: w >= 80,
     voice: w >= 84,
     bg: w >= 88,
-    subagents: w >= 92,
-    cost: w >= 96
+    subagents: w >= 92
   }
 }
 
@@ -360,18 +356,12 @@ function IdleSince({ endedAt }: { endedAt: number }) {
   return `✓ ${fmtDuration(now - endedAt)}`
 }
 
-const EFFORT_LABELS: Record<string, string> = {
-  high: 'high',
-  low: 'low',
-  medium: 'med'
-}
-
 const effortLabel = (effort?: string) => {
   const value = String(effort ?? '')
     .trim()
     .toLowerCase()
 
-  return value && value !== 'normal' && value !== 'default' ? (EFFORT_LABELS[value] ?? value) : ''
+  return value && value !== 'medium' && value !== 'normal' && value !== 'default' ? value : ''
 }
 
 const shortModelLabel = (model: string) =>
@@ -421,7 +411,6 @@ export function StatusRule({
   model,
   modelFast,
   modelReasoningEffort,
-  showReasoning,
   indicatorStyle = 'kaomoji',
   notice,
   usage,
@@ -432,8 +421,7 @@ export function StatusRule({
   turnStartedAt,
   voiceLabel,
   onSessionCountClick,
-  t,
-  line
+  t
 }: StatusRuleProps) {
   const pct = usage.context_percent
   const barColor = ctxBarColor(pct, t)
@@ -451,8 +439,6 @@ export function StatusRule({
 
   const bar = !segs.compactCtx && usage.context_max ? ctxBar(pct) : ''
   const modelText = modelLabel(model, modelReasoningEffort, modelFast)
-  const reasoningLabel = showReasoning ? 'think' : ''
-  const isTopLine = line === 'top'
 
   // A credits notice replaces the status/verb slot, but only when idle —
   // while busy the FaceTicker always wins (R1 render priority). The notice
@@ -471,21 +457,18 @@ export function StatusRule({
   // yields first. The busy face width depends on the active /indicator style
   // (kaomoji is wide + verb; unicode is a bare 1-col spinner). When a notice
   // occupies the slot it reserves only `noticeReserve` (it shrinks/truncates).
-  const slotWidth = isTopLine
-    ? busy
-      ? busyIndicatorWidth(indicatorStyle, turnStartedAt != null)
-      : showNotice
-        ? noticeReserve
-        : stringWidth(status)
-    : 0
+  const slotWidth = busy
+    ? busyIndicatorWidth(indicatorStyle, turnStartedAt != null)
+    : showNotice
+      ? noticeReserve
+      : stringWidth(status)
 
-  const essentialWidth = isTopLine
-    ? stringWidth('─ ') +
-      slotWidth +
-      stringWidth(' │ ') +
-      stringWidth(modelText) +
-      (ctxLabel ? stringWidth(' │ ') + stringWidth(ctxLabel) : 0)
-    : 0
+  const essentialWidth =
+    stringWidth('─ ') +
+    slotWidth +
+    stringWidth(' │ ') +
+    stringWidth(modelText) +
+    (ctxLabel ? stringWidth(' │ ') + stringWidth(ctxLabel) : 0)
 
   const { leftWidth, rightWidth, separatorWidth } = statusRuleWidths(cols, cwdLabel, essentialWidth)
 
@@ -509,7 +492,6 @@ export function StatusRule({
 
   const sessionCountText = liveSessionCount > 0 ? statusSessionCountLabel(liveSessionCount) : ''
   const compressions = typeof usage.compressions === 'number' ? usage.compressions : 0
-  const costText = typeof usage.cost_usd === 'number' && usage.cost_usd > 0 ? `$${usage.cost_usd.toFixed(4)}` : ''
 
   // Dev-only readout (HERMES_DEV_CREDITS). The server omits the key entirely unless the
   // flag is on, so this segment self-hides for normal users. micros→cents is allowed money
@@ -520,25 +502,35 @@ export function StatusRule({
       ? `Δ ${(usage.dev_credits_spent_micros / 10000).toFixed(1)}¢`
       : ''
 
-  const showBar = isTopLine && !!bar && fits(SEP + stringWidth(`[${bar}] ${pct != null ? `${pct}%` : ''}`))
-  const showDuration = !isTopLine && segs.duration && !!sessionStartedAt && fits(SEP + MAX_DURATION_WIDTH)
+  const showBar = !!bar && fits(SEP + stringWidth(`[${bar}] ${pct != null ? `${pct}%` : ''}`))
+  const showDuration = segs.duration && !!sessionStartedAt && fits(SEP + MAX_DURATION_WIDTH)
+
   // Idle clock — time since the last final agent response. Hidden while busy
   // (the FaceTicker's elapsed tail covers the live turn) and before the first
   // turn completes. Shares the duration breakpoint and width reservation.
-  const showIdle = !isTopLine && segs.duration && !busy && lastTurnEndedAt != null && fits(SEP + stringWidth('✓ ') + MAX_DURATION_WIDTH)
-  const showCompressions = !isTopLine && segs.compressions && compressions > 0 && fits(SEP + stringWidth(`cmp ${compressions}`))
-  const showReasoningSeg = isTopLine && segs.reasoning && !!reasoningLabel && fits(SEP + stringWidth(reasoningLabel))
-  const showVoice = !isTopLine && segs.voice && !!voiceLabel && fits(SEP + stringWidth(voiceLabel))
-  const showSessionCount = !isTopLine && !!sessionCountText && fits(SEP + stringWidth(sessionCountText))
-  const showBg = !isTopLine && segs.bg && bgCount > 0 && fits(SEP + stringWidth(`${bgCount} bg`))
-  const showCostSeg = !isTopLine && segs.cost && !!costText && fits(SEP + stringWidth(costText))
+  const showIdle =
+    segs.duration && !busy && lastTurnEndedAt != null && fits(SEP + stringWidth('✓ ') + MAX_DURATION_WIDTH)
+
+  const showCompressions = segs.compressions && compressions > 0 && fits(SEP + stringWidth(`cmp ${compressions}`))
+  const showVoice = segs.voice && !!voiceLabel && fits(SEP + stringWidth(voiceLabel))
+  const showSessionCount = !!sessionCountText && fits(SEP + stringWidth(sessionCountText))
+  const showBg = segs.bg && bgCount > 0 && fits(SEP + stringWidth(`${bgCount} bg`))
   const subagentCount = typeof usage.active_subagents === 'number' ? usage.active_subagents : 0
-  const showSubagents = !isTopLine && segs.subagents && subagentCount > 0 && fits(SEP + stringWidth(`⛓ ${subagentCount}`))
+  const showSubagents = segs.subagents && subagentCount > 0 && fits(SEP + stringWidth(`⛓ ${subagentCount}`))
+
+  // Parked-background reassurance: a top-level delegate_task runs in the
+  // background, so the turn ends (idle) while the subagent keeps working and its
+  // result re-enters as a fresh turn later. When idle with work still in flight,
+  // spell out that the agent resumes on its own — no spinner, nothing to poll.
+  // Width-budgeted like every tail segment, so it drops first on a tight
+  // terminal where ⛓ already carries the signal.
   const resumeHintText =
     subagentCount === 1 ? '↩ resumes when subagent finishes' : `↩ resumes when ${subagentCount} subagents finish`
-  const showResumeHint = !isTopLine && !busy && subagentCount > 0 && fits(SEP + stringWidth(resumeHintText))
+
+  const showResumeHint = !busy && subagentCount > 0 && fits(SEP + stringWidth(resumeHintText))
+  // Dev-gated readout (HERMES_DEV_CREDITS), lowest priority,
   // so it consumes tail budget LAST and drops first on a narrow terminal.
-  const showDevCredits = !isTopLine && !!devCreditsText && fits(SEP + stringWidth(devCreditsText))
+  const showDevCredits = !!devCreditsText && fits(SEP + stringWidth(devCreditsText))
 
   const handleSessionCountClick = (event: { stopImmediatePropagation?: () => void }) => {
     event.stopImmediatePropagation?.()
@@ -556,135 +548,116 @@ export function StatusRule({
   return (
     <Box height={1}>
       <Box flexDirection="row" flexShrink={1} overflow="hidden" width={leftWidth}>
-        {isTopLine ? (
-          <>
-            {/* Pinned essentials — model + context never shrink, always visible. */}
-            <Box flexDirection="row" flexShrink={0}>
-              <Text color={t.color.border}>{'─ '}</Text>
-              {busy ? (
-                <FaceTicker color={statusColor} startedAt={turnStartedAt} style={indicatorStyle} />
-              ) : showNotice ? null : (
-                <Text color={statusColor} wrap="truncate-end">
-                  {status}
-                </Text>
-              )}
-            </Box>
-            {/* Notice slot — the only shrinkable left element (R3-M7). Sits in a
-                flexShrink={1} box with truncate-end so it yields/ellipsizes
-                before the pinned model │ ctx box ever clips. */}
-            {showNotice ? (
-              <Box flexDirection="row" flexShrink={1} overflow="hidden">
-                <Text color={noticeColor(notice!.level, t)} wrap="truncate-end">
-                  {notice!.text}
-                </Text>
-              </Box>
-            ) : null}
-            {/* Pinned essentials — model + context never shrink, always visible. */}
-            <Box flexDirection="row" flexShrink={0}>
-              {DEV_CREDITS_MODE ? (
-                <Text color={t.color.warn} wrap="truncate-end">
-                  {' (dev credits)'}
-                </Text>
-              ) : null}
-              <Text color={t.color.muted} wrap="truncate-end">
-                {' │ '}
-                {modelText}
-              </Text>
-              {ctxLabel ? (
-                <Text color={t.color.muted} wrap="truncate-end">
-                  {' │ '}
-                  {ctxLabel}
-                </Text>
-              ) : null}
-            </Box>
-            {showBar ? (
-              <Text color={t.color.muted} wrap="truncate-end">
-                {' │ '}
-                <Text color={barColor}>[{bar}]</Text> <Text color={barColor}>{pct != null ? `${pct}%` : ''}</Text>
-              </Text>
-            ) : null}
-            {showReasoningSeg ? (
-              <Text color={t.color.muted} wrap="truncate-end">
-                {' │ '}
-                <Text color={showReasoning ? t.color.accent : t.color.muted}>
-                  {reasoningLabel}
-                </Text>
-              </Text>
-            ) : null}
-          </>
-        ) : (
-          <>
-            <Text color={t.color.border}>{'─ '}</Text>
-            {showDuration ? (
-              <Text color={t.color.muted} wrap="truncate-end">
-                {' │ '}
-                <SessionDuration startedAt={sessionStartedAt!} />
-              </Text>
-            ) : null}
-            {showIdle ? (
-              <Text color={t.color.muted} wrap="truncate-end">
-                {' │ '}
-                <IdleSince endedAt={lastTurnEndedAt!} />
-              </Text>
-            ) : null}
-            {showCompressions ? (
-              <Text color={t.color.muted} wrap="truncate-end">
-                {' │ '}
-                <Text color={compressions >= 10 ? t.color.error : compressions >= 5 ? t.color.warn : t.color.muted}>
-                  cmp {compressions}
-                </Text>
-              </Text>
-            ) : null}
-            {showVoice ? (
-              <Text
-                color={
-                  voiceLabel!.startsWith('●') ? t.color.error : voiceLabel!.startsWith('◉') ? t.color.warn : t.color.muted
-                }
-                wrap="truncate-end"
-              >
-                {' │ '}
-                {voiceLabel}
-              </Text>
-            ) : null}
-            {showSessionCount ? sessionCountNode : null}
-            {showBg ? (
-              <Text color={t.color.muted} wrap="truncate-end">
-                {' │ '}
-                {bgCount} bg
-              </Text>
-            ) : null}
-            {showSubagents ? (
-              <Text color={t.color.muted} wrap="truncate-end">
-                {' │ '}⛓ {subagentCount}
-              </Text>
-            ) : null}
-            {showResumeHint ? (
-              <Text color={t.color.muted} dim wrap="truncate-end">
-                {' │ '}
-                {resumeHintText}
-              </Text>
-            ) : null}
-            {showCostSeg ? (
-              <Text color={t.color.muted} wrap="truncate-end">
-                {' │ '}
-                {costText}
-              </Text>
-            ) : null}
-            {showDevCredits ? (
-              <Text color={t.color.accent} wrap="truncate-end">
-                {' │ '}
-                {devCreditsText}
-              </Text>
-            ) : null}
-            {/* SpawnHud isn't part of the tail budget (its width is dynamic), so it
-                renders last — any overflow truncates the HUD itself rather than the
-                budgeted segments before it. It self-hides when no delegation runs. */}
-            <SpawnHud t={t} />
-          </>
-        )}
+        {/* Leading pinned chrome: border + busy face / idle status. When a
+            notice occupies the slot the status text is dropped — the notice
+            renders as a separate shrinkable box below so a long notice
+            ellipsizes instead of crushing model │ ctx (R3-M7). */}
+        <Box flexDirection="row" flexShrink={0}>
+          <Text color={t.color.border}>{'─ '}</Text>
+          {busy ? (
+            <FaceTicker color={statusColor} startedAt={turnStartedAt} style={indicatorStyle} />
+          ) : showNotice ? null : (
+            <Text color={statusColor} wrap="truncate-end">
+              {status}
+            </Text>
+          )}
+        </Box>
+        {/* Notice slot — the only shrinkable left element (R3-M7). Sits in a
+            flexShrink={1} box with truncate-end so it yields/ellipsizes
+            before the pinned model │ ctx box ever clips. */}
+        {showNotice ? (
+          <Box flexDirection="row" flexShrink={1} overflow="hidden">
+            <Text color={noticeColor(notice!.level, t)} wrap="truncate-end">
+              {notice!.text}
+            </Text>
+          </Box>
+        ) : null}
+        {/* Pinned essentials — model + context never shrink, always visible. */}
+        <Box flexDirection="row" flexShrink={0}>
+          {DEV_CREDITS_MODE ? (
+            <Text color={t.color.warn} wrap="truncate-end">
+              {' (dev credits)'}
+            </Text>
+          ) : null}
+          <Text color={t.color.muted} wrap="truncate-end">
+            {' │ '}
+            {modelText}
+          </Text>
+          {ctxLabel ? (
+            <Text color={t.color.muted} wrap="truncate-end">
+              {' │ '}
+              {ctxLabel}
+            </Text>
+          ) : null}
+        </Box>
+        {showBar ? (
+          <Text color={t.color.muted} wrap="truncate-end">
+            {' │ '}
+            <Text color={barColor}>[{bar}]</Text> <Text color={barColor}>{pct != null ? `${pct}%` : ''}</Text>
+          </Text>
+        ) : null}
+        {showDuration ? (
+          <Text color={t.color.muted} wrap="truncate-end">
+            {' │ '}
+            <SessionDuration startedAt={sessionStartedAt!} />
+          </Text>
+        ) : null}
+        {showIdle ? (
+          <Text color={t.color.muted} wrap="truncate-end">
+            {' │ '}
+            <IdleSince endedAt={lastTurnEndedAt!} />
+          </Text>
+        ) : null}
+        {showCompressions ? (
+          <Text color={t.color.muted} wrap="truncate-end">
+            {' │ '}
+            <Text color={compressions >= 10 ? t.color.error : compressions >= 5 ? t.color.warn : t.color.muted}>
+              cmp {compressions}
+            </Text>
+          </Text>
+        ) : null}
+        {showVoice ? (
+          <Text
+            color={
+              voiceLabel!.startsWith('●') ? t.color.error : voiceLabel!.startsWith('◉') ? t.color.warn : t.color.muted
+            }
+            wrap="truncate-end"
+          >
+            {' │ '}
+            {voiceLabel}
+          </Text>
+        ) : null}
+        {showSessionCount ? sessionCountNode : null}
+        {showBg ? (
+          <Text color={t.color.muted} wrap="truncate-end">
+            {' │ '}
+            {bgCount} bg
+          </Text>
+        ) : null}
+        {showSubagents ? (
+          <Text color={t.color.muted} wrap="truncate-end">
+            {' │ '}⛓ {subagentCount}
+          </Text>
+        ) : null}
+        {showResumeHint ? (
+          <Text color={t.color.muted} dim wrap="truncate-end">
+            {' │ '}
+            {resumeHintText}
+          </Text>
+        ) : null}
+        {showDevCredits ? (
+          <Text color={t.color.accent} wrap="truncate-end">
+            {' │ '}
+            {devCreditsText}
+          </Text>
+        ) : null}
+        {/* SpawnHud isn't part of the tail budget (its width is dynamic), so it
+            renders last — any overflow truncates the HUD itself rather than the
+            budgeted segments before it. It self-hides when no delegation runs. */}
+        <SpawnHud t={t} />
       </Box>
 
-      {rightWidth > 0 && !isTopLine ? (
+      {rightWidth > 0 ? (
         <>
           <Text color={t.color.border}>{separatorWidth >= 3 ? ' ─ ' : ' '}</Text>
           <Box flexShrink={0} width={rightWidth}>
@@ -703,7 +676,7 @@ export function FloatBox({ children, color }: { children: ReactNode; color: stri
     <Box
       alignSelf="flex-start"
       borderColor={color}
-      borderStyle={KRAKEN_BORDER}
+      borderStyle="double"
       flexDirection="column"
       marginTop={1}
       opaque
@@ -803,11 +776,9 @@ interface StatusRuleProps {
   busy: boolean
   cols: number
   cwdLabel: string
-  line: 'bottom' | 'top'
   model: string
   modelFast?: boolean
   modelReasoningEffort?: string
-  showReasoning?: boolean
   indicatorStyle?: IndicatorStyle
   notice?: Notice | null
   sessionStartedAt?: null | number

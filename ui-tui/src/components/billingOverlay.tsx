@@ -3,7 +3,7 @@ import { useState } from 'react'
 
 import type { BillingOverlayState } from '../app/interfaces.js'
 import type { BillingStateResponse } from '../gatewayTypes.js'
-import { KRAKEN_BORDER, type Theme } from '../theme.js'
+import type { Theme } from '../theme.js'
 
 import { TextInput } from './textInput.js'
 
@@ -89,7 +89,7 @@ export function BillingOverlay({ onClose, onPatch, overlay, t }: BillingOverlayP
   const { ctx, screen, state: s } = overlay
 
   return (
-    <Box borderColor={t.color.accent} borderStyle={KRAKEN_BORDER} flexDirection="column" paddingX={1}>
+    <Box borderColor={t.color.accent} borderStyle="round" flexDirection="column" paddingX={1}>
       {screen === 'overview' && <OverviewScreen ctx={ctx} onClose={onClose} onPatch={onPatch} s={s} t={t} />}
       {screen === 'buy' && <BuyScreen ctx={ctx} onClose={onClose} onPatch={onPatch} s={s} t={t} />}
       {screen === 'confirm' && (
@@ -565,7 +565,7 @@ function AutoReloadScreen({ ctx, onClose, onPatch, s, t }: ScreenProps) {
   const fieldBox = (label: string, value: string, onChange: (v: string) => void, focused: boolean, key: string) => (
     <Box flexDirection="column" key={key}>
       <Text color={focused ? t.color.label : t.color.muted}>{label}</Text>
-      <Box borderColor={focused ? t.color.accent : t.color.border} borderStyle={KRAKEN_BORDER} paddingX={1}>
+      <Box borderColor={focused ? t.color.accent : t.color.border} borderStyle="round" paddingX={1}>
         <Text color={t.color.label}>{'$'}</Text>
         <TextInput
           columns={16}

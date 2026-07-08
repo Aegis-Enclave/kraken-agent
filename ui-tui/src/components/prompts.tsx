@@ -2,7 +2,7 @@ import { Box, Text, useInput, wrapAnsi } from '@hermes/ink'
 import { useState } from 'react'
 
 import { isMac } from '../lib/platform.js'
-import { KRAKEN_BORDER, type Theme } from '../theme.js'
+import type { Theme } from '../theme.js'
 import type { ApprovalReq, ClarifyReq, ConfirmReq } from '../types.js'
 
 import { TextInput } from './textInput.js'
@@ -93,7 +93,7 @@ export function ApprovalPrompt({ cols = 80, onChoice, req, t }: ApprovalPromptPr
   const overflow = rawLines.length - shown.length
 
   return (
-    <Box borderColor={t.color.warn} borderStyle={KRAKEN_BORDER} flexDirection="column" paddingX={1}>
+    <Box borderColor={t.color.warn} borderStyle="double" flexDirection="column" paddingX={1}>
       <Text bold color={t.color.warn}>
         ⚠ approval required · {req.description}
       </Text>
@@ -242,7 +242,7 @@ export function ConfirmPrompt({ onCancel, onConfirm, req, t }: ConfirmPromptProp
   ]
 
   return (
-    <Box borderColor={accent} borderStyle={KRAKEN_BORDER} flexDirection="column" paddingX={1}>
+    <Box borderColor={accent} borderStyle="double" flexDirection="column" paddingX={1}>
       <Text bold color={accent}>
         {req.danger ? '⚠' : '?'} {req.title}
       </Text>

@@ -93,7 +93,6 @@ const baseProps = {
   busy: false,
   cols: 100,
   cwdLabel: '~/repo',
-  line: 'top',
   liveSessionCount: 0,
   model: 'opus-4.8',
   sessionStartedAt: null,
@@ -101,15 +100,14 @@ const baseProps = {
   statusColor: DEFAULT_THEME.color.ok,
   t: DEFAULT_THEME,
   turnStartedAt: null,
-  usage: { calls: 1, context_max: 200_000, context_percent: 25, context_used: 50_000, input: 50_000, output: 0, total: 50_000 },
+  usage: { context_max: 200_000, context_percent: 25, context_used: 50_000, total: 50_000 },
   voiceLabel: ''
-} as const
+}
 
 describe('StatusRule background-subagent indicator', () => {
   it('renders ⛓ N on a wide terminal when subagents are running', () => {
     const element = StatusRule({
       ...baseProps,
-      line: 'bottom',
       usage: { ...baseProps.usage, active_subagents: 3 }
     })
 
@@ -119,7 +117,6 @@ describe('StatusRule background-subagent indicator', () => {
   it('omits the segment when no subagents are running', () => {
     const element = StatusRule({
       ...baseProps,
-      line: 'bottom',
       usage: { ...baseProps.usage, active_subagents: 0 }
     })
 
@@ -127,7 +124,7 @@ describe('StatusRule background-subagent indicator', () => {
   })
 
   it('omits the segment when the field is absent', () => {
-    const element = StatusRule({ ...baseProps, line: 'bottom' })
+    const element = StatusRule({ ...baseProps })
 
     expect(textContent(element)).not.toContain('⛓')
   })
@@ -135,7 +132,6 @@ describe('StatusRule background-subagent indicator', () => {
   it('spells out the auto-resume hint when idle with subagents in flight', () => {
     const element = StatusRule({
       ...baseProps,
-      line: 'bottom',
       usage: { ...baseProps.usage, active_subagents: 1 }
     })
 
@@ -145,7 +141,6 @@ describe('StatusRule background-subagent indicator', () => {
   it('pluralizes the resume hint for multiple in-flight subagents', () => {
     const element = StatusRule({
       ...baseProps,
-      line: 'bottom',
       usage: { ...baseProps.usage, active_subagents: 3 }
     })
 
@@ -155,7 +150,6 @@ describe('StatusRule background-subagent indicator', () => {
   it('hides the resume hint mid-turn (a busy turn owns the indicator)', () => {
     const element = StatusRule({
       ...baseProps,
-      line: 'bottom',
       busy: true,
       turnStartedAt: Date.now(),
       usage: { ...baseProps.usage, active_subagents: 2 }
@@ -165,7 +159,7 @@ describe('StatusRule background-subagent indicator', () => {
   })
 
   it('omits the resume hint when no subagents are running', () => {
-    const element = StatusRule({ ...baseProps, line: 'bottom' })
+    const element = StatusRule({ ...baseProps })
 
     expect(textContent(element)).not.toContain('resumes when')
   })
@@ -176,7 +170,6 @@ describe('StatusRule background-subagent indicator', () => {
     // not shown when space is tight even with a live count.
     const element = StatusRule({
       ...baseProps,
-      line: 'bottom',
       cols: 44,
       bgCount: 1,
       usage: { ...baseProps.usage, active_subagents: 2 }
@@ -195,7 +188,6 @@ describe('StatusRule session count click target', () => {
       busy: false,
       cols: 100,
       cwdLabel: '~/repo',
-      line: 'bottom',
       liveSessionCount: 1,
       model: 'kimi-k2.6',
       onSessionCountClick: openSwitcher,
@@ -221,7 +213,6 @@ describe('StatusRule session count click target', () => {
       busy: false,
       cols: 44,
       cwdLabel: '~/src/hermes-agent/apps/desktop (bb/tui-statusbar-responsive)',
-      line: 'top',
       liveSessionCount: 3,
       model: 'opus-4.8',
       onSessionCountClick: vi.fn(),
@@ -400,7 +391,6 @@ describe('StatusRule idle-since read-out', () => {
     const element = StatusRule({
       ...baseProps,
       lastTurnEndedAt: endedAt,
-      line: 'bottom',
       sessionStartedAt: Date.now() - 60_000
     })
 

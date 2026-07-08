@@ -16,7 +16,7 @@ import {
   sanitizeAnsiForRender,
   stripAnsi
 } from '../lib/text.js'
-import { KRAKEN_BORDER, type Theme } from '../theme.js'
+import type { Theme } from '../theme.js'
 import type { ActiveTool, DetailsMode, Msg, SectionVisibility } from '../types.js'
 
 import { Md } from './markdown.js'
@@ -107,7 +107,7 @@ export const MessageLine = memo(function MessageLine({
     const preview = compactPreview(stripped, maxChars) || '(empty tool result)'
 
     return (
-      <Box alignSelf="flex-start" borderColor={t.color.muted} borderStyle={KRAKEN_BORDER} marginLeft={3} paddingX={1}>
+      <Box alignSelf="flex-start" borderColor={t.color.muted} borderStyle="round" marginLeft={3} paddingX={1}>
         {hasAnsi(msg.text) ? (
           <Text wrap="truncate-end">
             <Ansi>{safeAnsi}</Ansi>

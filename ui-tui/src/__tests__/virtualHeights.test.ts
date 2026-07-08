@@ -1,12 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
-
-vi.mock('../config/env.js', async (importOriginal) => {
-  const mod = await importOriginal<typeof import('../config/env.js')>()
-  return {
-    ...mod,
-    TERMUX_TUI_MODE: true
-  }
-})
+import { describe, expect, it } from 'vitest'
 
 import { estimatedMsgHeight, messageHeightKey, wrappedLines } from '../lib/virtualHeights.js'
 import type { Msg } from '../types.js'
