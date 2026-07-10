@@ -119,6 +119,12 @@ docs/superpowers/*
 # logs, and per-session caches are never artifacts of the codebase.
 .hermes/
 
+# Compiled JS outputs from TypeScript source — .ts/.tsx files are the source of truth
+apps/desktop/src/**/*.js
+apps/desktop/src/**/*.js.map
+apps/shared/src/**/*.js
+apps/shared/src/**/*.js.map
+
 # Desktop/bootstrap install marker written into the managed checkout root by the
 # bootstrap installer. It is Hermes-managed runtime state, never a code change —
 # ignore it so `hermes update`'s `git stash push --include-untracked` does not
