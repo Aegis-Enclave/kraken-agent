@@ -66,8 +66,9 @@ function RavenArt({ t }: { t: Theme }) {
     <Box flexDirection="column" height={RAVEN_ART.length} width={RAVEN_WIDTH}>
       {RAVEN_ART.map((line, i) => {
         const c = p[gradient[i]!] ?? t.color.muted
+
         return (
-          <Text key={i} color={c}>
+          <Text color={c} key={i}>
             {line}
           </Text>
         )
@@ -112,23 +113,15 @@ function SessionInfoSection({ t, wide }: { t: Theme; wide: boolean }) {
       <ThinDivider t={t} />
 
       <Box flexDirection="column" marginTop={1} rowGap={0}>
-        {model && (
-          <InfoLine
-            label="model"
-            value={shortModel}
-            t={t}
-          />
-        )}
+        {model && <InfoLine label="model" t={t} value={shortModel} />}
 
-        {sid && (
-          <InfoLine label="session" value={shortSid} t={t} />
-        )}
+        {sid && <InfoLine label="session" t={t} value={shortSid} />}
 
         {ctxMax > 0 && (
           <InfoLine
             label="context"
-            value={`${(ctxUsed / 1000).toFixed(0)}K/${(ctxMax / 1000).toFixed(0)}K (${ctxPct}%)`}
             t={t}
+            value={`${(ctxUsed / 1000).toFixed(0)}K/${(ctxMax / 1000).toFixed(0)}K (${ctxPct}%)`}
           />
         )}
       </Box>
@@ -137,10 +130,7 @@ function SessionInfoSection({ t, wide }: { t: Theme; wide: boolean }) {
 
       <Box marginTop={1}>
         <StatusDot active={ui.busy} t={t} />
-        <Text color={t.color.muted}>
-          {' '}
-          {ui.busy ? 'processing' : ui.status}
-        </Text>
+        <Text color={t.color.muted}> {ui.busy ? 'processing' : ui.status}</Text>
       </Box>
 
       {ui.liveSessionCount > 0 && (
@@ -204,9 +194,7 @@ export function RavenSidePanel({ width }: RavenSidePanelProps) {
       <Divider t={t} />
 
       <Box justifyContent="center" marginTop={1}>
-        <Text color={t.color.muted}>
-          {'nevermore'}
-        </Text>
+        <Text color={t.color.muted}>{'nevermore'}</Text>
       </Box>
     </Box>
   )
