@@ -567,6 +567,7 @@ def load_cli_config() -> Dict[str, Any]:
     # Load from file if exists
     if config_path.exists():
         try:
+            import yaml
             with open(config_path, "r", encoding="utf-8") as f:
                 from hermes_cli.config import _normalize_root_model_keys
 
