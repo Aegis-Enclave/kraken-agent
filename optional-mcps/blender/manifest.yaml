@@ -24,7 +24,13 @@ transport:
   # be at least 2 weeks old at pin time (supply-chain cooldown — same rule as
   # pyproject.toml dependencies). 1.6.4 released 2026-06-11. The catalog never
   # auto-updates; bumping the pin is a PR to this manifest.
+  #
+  # --with mcp<2.0.0: blender-mcp 1.6.4 imports `mcp.server.fastmcp`, which
+  # mcp 2.x removed. Resolving the SDK to >=2.0 breaks the bridge at import
+  # on startup. Pin the runtime SDK to <2.0.0 so uv resolves a compatible
+  # SDK. Revisit when blender-mcp ships a 2.x-compatible release.
   args:
+    - "--with=mcp<2.0.0"
     - "blender-mcp==1.6.4"
   version: "1.6.4"
   env:
