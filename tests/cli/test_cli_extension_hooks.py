@@ -80,6 +80,7 @@ class TestExtensionHookDefaults:
             spinner_widget="spinner",
             spacer="spacer",
             status_bar="status",
+            status_bar_bottom="status-bar-bottom",
             input_rule_top="top-rule",
             image_bar="image-bar",
             input_area="input-area",
@@ -91,7 +92,7 @@ class TestExtensionHookDefaults:
         assert children[1:] == [
             "sudo", "secret", "approval", "clarify", "spinner",
             "spacer", "status", "top-rule", "image-bar", "input-area",
-            "bottom-rule", "voice-status", "completions-menu",
+            "bottom-rule", "status-bar-bottom", "voice-status", "completions-menu",
         ]
 
 
@@ -109,6 +110,7 @@ class TestExtensionHookSubclass:
             spinner_widget="spinner",
             spacer="spacer",
             status_bar="status",
+            status_bar_bottom="status-bar-bottom",
             input_rule_top="top-rule",
             image_bar="image-bar",
             input_area="input-area",

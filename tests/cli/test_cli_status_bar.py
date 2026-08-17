@@ -112,7 +112,7 @@ class TestCLIStatusBar:
             context_length=200_000,
         )
 
-        text = cli_obj._build_status_bar_text(width=120)
+        text = cli_obj._build_status_bar_text(width=160)
 
         assert "claude-sonnet-4-20250514" in text
         assert "12.4K/200K" in text
@@ -156,6 +156,76 @@ class TestCLIStatusBar:
 
 
 
+        assert "🗜️ 2" in text
+
+    def test_compression_count_hidden_in_narrow_status_bar(self):
+        cli_obj = _attach_agent(
+            _make_cli(),
+            prompt_tokens=10_000,
+            completion_tokens=2_400,
+            total_tokens=12_400,
+            api_calls=7,
+            context_tokens=12_400,
+            context_length=200_000,
+            compressions=5,
+        )
+
+        text = cli_obj._build_status_bar_text(width=50)
+
+        assert "🗜️" not in text
+
+    def test_compression_count_style_thresholds(self):
+        cli_obj = _make_cli()
+
+        assert cli_obj._compression_count_style(1) == "class:status-bar-dim"
+        assert cli_obj._compression_count_style(4) == "class:status-bar-dim"
+        assert cli_obj._compression_count_style(5) == "class:status-bar-warn"
+        assert cli_obj._compression_count_style(9) == "class:status-bar-warn"
+        assert cli_obj._compression_count_style(10) == "class:status-bar-bad"
+        assert cli_obj._compression_count_style(25) == "class:status-bar-bad"
+
+    def test_compression_count_in_wide_fragments(self):
+        cli_obj = _attach_agent(
+            _make_cli(),
+            prompt_tokens=10_230,
+            completion_tokens=2_220,
+            total_tokens=12_450,
+            api_calls=7,
+            context_tokens=12_450,
+            context_length=200_000,
+            compressions=7,
+        )
+        cli_obj._status_bar_visible = True
+
+        # Compressions now live in the bottom status bar line
+        frags = cli_obj._get_status_bar_fragments_bottom()
+        frag_texts = [text for _, text in frags]
+
+        assert "🗜️ 7" in frag_texts
+        frag_styles = {text: style for style, text in frags}
+        assert frag_styles["🗜️ 7"] == "class:status-bar-warn"
+
+    def test_compression_count_absent_from_fragments_when_zero(self):
+        cli_obj = _attach_agent(
+            _make_cli(),
+            prompt_tokens=10_230,
+            completion_tokens=2_220,
+            total_tokens=12_450,
+            api_calls=7,
+            context_tokens=12_450,
+            context_length=200_000,
+            compressions=0,
+        )
+        cli_obj._status_bar_visible = True
+
+        # Check both top and bottom bars are clean
+        frags = cli_obj._get_status_bar_fragments()
+        frag_texts = [text for _, text in frags]
+        assert not any("🗜️" in t for t in frag_texts)
+
+        bottom_frags = cli_obj._get_status_bar_fragments_bottom()
+        bottom_texts = [text for _, text in bottom_frags]
+        assert not any("🗜️" in t for t in bottom_texts)
 
     def test_minimal_tui_chrome_threshold(self):
         cli_obj = _make_cli()

@@ -568,7 +568,7 @@ if [ -d "$INSTALL_DIR/skills" ]; then
 fi
 
 # --- Discover agent-browser's Chromium binary ---
-# The image's Dockerfile runs `npx playwright install chromium`, which
+# The image's Dockerfile runs `.venv/bin/playwright install chromium`, which
 # populates ``$PLAYWRIGHT_BROWSERS_PATH`` (=/opt/hermes/.playwright) with
 # a ``chromium_headless_shell-<build>/chrome-headless-shell-linux64/``
 # directory. agent-browser (the runtime CLI Hermes spawns for the

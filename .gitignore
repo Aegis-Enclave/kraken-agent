@@ -41,6 +41,12 @@ test_durations.json
 tmp/
 temp_vision_images/
 hermes-*/*
+# Allow hermes-tui-rust directory (Rust TUI project) - exception to hermes-*/* rule
+!hermes-tui-rust/
+!hermes-tui-rust/**/
+!hermes-tui-rust/*.md
+!hermes-tui-rust/*.toml
+!hermes-tui-rust/Cargo.lock
 examples/
 tests/quick_test_dataset.jsonl
 tests/sample_dataset.jsonl
@@ -145,6 +151,12 @@ docs/superpowers/*
 # logs, and per-session caches are never artifacts of the codebase.
 .hermes/
 
+# Compiled JS outputs from TypeScript source — .ts/.tsx files are the source of truth
+apps/desktop/src/**/*.js
+apps/desktop/src/**/*.js.map
+apps/shared/src/**/*.js
+apps/shared/src/**/*.js.map
+
 # Desktop/bootstrap install marker written into the managed checkout root by the
 # bootstrap installer. It is Hermes-managed runtime state, never a code change —
 # ignore it so `hermes update`'s `git stash push --include-untracked` does not
@@ -197,6 +209,7 @@ apps/desktop/demo/
 # the first line of defence and cannot stop `git add -f` at all — the
 # infographic-check CI job is what actually enforces this.
 infographic/
+.empryo
 infographics/
 infograficos/
 infografico/

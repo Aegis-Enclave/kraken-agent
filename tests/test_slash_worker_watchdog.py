@@ -1,6 +1,32 @@
+import io
+from typing import Any
+
+import psutil
+from rich.panel import Panel
+from rich.text import Text
 import inspect
 
 from tui_gateway import slash_worker
+
+
+class _FakeSlashCli:
+    console: Any
+
+    def __init__(self):
+        self.console = None
+
+    def process_command(self, command):
+        self.console.print(Panel(Text("Previous Conversation"), title="Resume"))
+
+
+def test_run_strips_rich_color_escapes_from_slash_output():
+    cli_obj = _FakeSlashCli()
+
+    output = slash_worker._run(cli_obj, "/resume")  # type: ignore[arg-type]
+
+    assert "\x1b[" not in output
+    assert "Previous Conversation" in output
+    assert "Resume" in output
 
 
 def test_is_orphaned_true_when_ppid_changes():

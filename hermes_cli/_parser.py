@@ -276,6 +276,13 @@ def build_top_level_parser():
     )
     _inherited_flag(
         parser,
+        "--tui-rust",
+        action="store_true",
+        default=False,
+        help="Launch the Rust-based TUI instead of the TypeScript/Ink TUI or classic REPL",
+    )
+    _inherited_flag(
+        parser,
         "--cli",
         action="store_true",
         default=False,

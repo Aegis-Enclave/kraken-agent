@@ -3401,21 +3401,10 @@ function Install-NodeDeps {
         # agent-browser -- it expects a Playwright-managed Chromium.
         if ($browserNpmOk) {
             Write-Info "Installing browser engine (Playwright Chromium)..."
-            # npx lives next to npm in the same bin dir.  Prefer .cmd to dodge
-            # the same execution-policy gotcha that affects npm.ps1 (see above).
-            $npmDir = Split-Path $npmExe -Parent
-            $npxExe = $null
-            foreach ($cand in @("npx.cmd", "npx.exe", "npx")) {
-                $try = Join-Path $npmDir $cand
-                if (Test-Path $try) { $npxExe = $try; break }
-            }
-            if (-not $npxExe) {
-                $npxCmd = Get-Command npx -ErrorAction SilentlyContinue
-                if ($npxCmd) { $npxExe = $npxCmd.Source }
-            }
-            if (-not $npxExe) {
-                Write-Warn "npx not found -- cannot install Playwright Chromium."
-                Write-Info "Run manually later: cd `"$InstallDir`"; npx playwright install chromium"
+            $pythonExe = if (-not $NoVenv) { "$InstallDir\venv\Scripts\python.exe" } else { (& $UvCmd python find $PythonVersion) }
+            if (-not $pythonExe -or -not (Test-Path $pythonExe)) {
+                Write-Warn "Python not found -- cannot install Playwright Chromium."
+                Write-Info "Run manually later: cd `"$InstallDir`"; python -m playwright install chromium"
             } else {
                 $pwLog = "$env:TEMP\hermes-playwright-install-$(Get-Random).log"
                 Push-Location $InstallDir
@@ -3432,14 +3421,6 @@ function Install-NodeDeps {
                     # _Run-NpmInstall above for the same pattern and
                     # the rationale behind 2>&1 before the pipe.
                     Write-Info "(this can take several minutes -- streaming progress below)"
-                    # --yes auto-accepts npx's "Need to install playwright@X.Y.Z"
-                    # confirmation prompt.  Without it, npx 7+ blocks on stdin
-                    # waiting for a y/N answer that never comes when this is
-                    # invoked through a pipeline (Tee-Object disconnects stdin
-                    # from the user's TTY), and the install hangs indefinitely
-                    # after printing "Need to install the following packages:
-                    # playwright@X.Y.Z".
-                    #
                     # Relax EAP around the playwright invocation: playwright
                     # emits a "Chromium downloaded to ..." success banner to
                     # stderr after a successful install.  The launcher merges
@@ -3449,15 +3430,15 @@ function Install-NodeDeps {
                     # the returned exit code instead, which is the reliable
                     # signal.
                     #
-                    # The wall-clock ceiling is the #76222 / #84614 fix: the
-                    # Chromium download reaches 100% and the extraction wedges
-                    # (or the registry fetch stalls), and without a bound the
-                    # installer sits on this line forever.  bash has carried
-                    # the same 600s guard via run_playwright_install since
-                    # #39219.
+                                        # The ForEach-Object { "$_" } coercion BEFORE Tee-Object
+                    # is a cosmetic polish: with bare 2>&1, PowerShell still
+                    # renders stderr lines through its NativeCommandError
+                    # formatter.  Coercing each pipeline item to a string
+                    # strips that wrapper so the user sees clean playwright
+                    # output instead of the alarming-looking error formatting.
                     $ErrorActionPreference = "Continue"
-                    $pwCode = _Invoke-NativeWithTimeout $npxExe "--yes playwright install chromium" `
-                        $InstallDir $pwLog $nodeDepsTimeoutSec
+                    & $pythonExe -m playwright install chromium 2>&1 | ForEach-Object { "$_" } | Tee-Object -FilePath $pwLog
+                    $pwCode = $LASTEXITCODE
                     $ErrorActionPreference = $prevEAP
                     if ($pwCode -eq 0) {
                         Write-Success "Playwright Chromium installed (browser tools ready)"
@@ -3482,12 +3463,12 @@ function Install-NodeDeps {
                                 Write-Info "  Full log: $pwLog"
                             }
                         }
-                        Write-Info "Run manually later: cd `"$InstallDir`"; npx playwright install chromium"
+                        Write-Info "Run manually later: cd `"$InstallDir`"; python -m playwright install chromium"
                     }
                 } catch {
                     if ($prevEAP) { $ErrorActionPreference = $prevEAP }
                     Write-Warn "Playwright Chromium install could not be launched: $_"
-                    Write-Info "Run manually later: cd `"$InstallDir`"; npx playwright install chromium"
+                    Write-Info "Run manually later: cd `"$InstallDir`"; python -m playwright install chromium"
                 } finally {
                     Pop-Location
                 }

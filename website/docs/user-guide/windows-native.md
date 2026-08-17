@@ -218,7 +218,7 @@ The browser tool uses `agent-browser` (a Node helper) to drive Chromium. On Wind
 
 - The installer puts `agent-browser` on PATH via npm.
 - `shutil.which("agent-browser", path=...)` picks up the `.cmd` shim automatically — `CreateProcessW` can't execute an extensionless shebang, so Hermes always resolves to the `.CMD` wrapper. Don't manually invoke the shebang script; always go through the `.cmd`.
-- Playwright Chromium is auto-installed on first run (`npx playwright install chromium`). If installation fails, `hermes doctor` surfaces it with a fix-it hint.
+- Playwright Chromium is auto-installed on first run (`python -m playwright install chromium`). If installation fails, `hermes doctor` surfaces it with a fix-it hint.
 
 ## Running Hermes on Windows — practical notes
 
@@ -303,7 +303,7 @@ Check `hermes gateway status` — it merges the schtasks entry, the Startup-fold
 You set it in the current process only; close and reopen the shell, or set it at User scope in System Properties → Environment Variables. Verify with `echo $env:EDITOR` in a new PowerShell window.
 
 **Browser tool launches but tools time out.**
-Chromium is auto-installed on first run. If the install failed (rate-limited GitHub, Playwright CDN hiccup), run `hermes doctor` — it will surface the missing Chromium and print the exact `npx playwright install chromium` command to fix it.
+Chromium is auto-installed on first run. If the install failed (rate-limited GitHub, Playwright CDN hiccup), run `hermes doctor` — it will surface the missing Chromium and print the exact `python -m playwright install chromium` command to fix it.
 
 **`agent-browser` fails with a weird Node version error.**
 The installer provisions Node 26 at `%LOCALAPPDATA%\hermes\node` but your PATH may have an older system Node 18 first. Either move Hermes's node dir earlier on PATH, or delete the system install if you don't use Node elsewhere.

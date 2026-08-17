@@ -122,9 +122,9 @@ Running Hermes as a dedicated unprivileged user (e.g. a `hermes` systemd service
 
 1. **One time, as an admin user with sudo**, install the system libraries Chromium needs:
    ```bash
-   sudo npx playwright install-deps chromium
+   sudo uv run --with playwright playwright install-deps chromium
    ```
-   (You can run this from anywhere — `npx` will fetch Playwright on the fly.)
+   (You can run this from anywhere — `uv run` will fetch Playwright on the fly.)
 
 2. **As the unprivileged service user**, run the regular installer. It will detect the missing sudo, skip `--with-deps`, and install Chromium into the user's local Playwright cache:
    ```bash

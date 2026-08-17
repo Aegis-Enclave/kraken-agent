@@ -1051,6 +1051,25 @@ def init_agent(
     agent._stream_writer_tls = threading.local()
     agent._stream_writer_dropped = 0
 
+    # Streaming master switch — set from config so providers whose proxies
+    # reject streaming (e.g. Mistral on local proxy) don't fail the first
+    # API call on every new session.  The conversation loop checks this
+    # flag before entering the streaming code path.
+    try:
+        from hermes_cli.config import load_config
+        _cfg = load_config()
+        _streaming_cfg = _cfg.get("streaming", {}) if isinstance(_cfg, dict) else {}
+        if not _streaming_cfg.get("enabled", True):
+            agent._disable_streaming = True
+    except Exception:
+        pass
+
+    # Displayed reasoning text streamed during the current model response,
+    # captured only when a surface consumed it via a reasoning callback. Used
+    # by active-turn redirect to checkpoint what the user actually saw without
+    # ever persisting hidden provider reasoning.
+    agent._current_streamed_reasoning_text = ""
+
     # Optional current-turn user-message override used when the API-facing
     # user message intentionally differs from the persisted transcript
     # (e.g. CLI voice mode adds a temporary prefix for the live call only).

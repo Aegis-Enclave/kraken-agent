@@ -1,0 +1,38 @@
+# Rust
+/target
+/Cargo.lock
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Build artifacts
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+
+# Test output
+coverage/
+
+# Benchmark results
+criterion/
+
+# Rust analyzer
+rust-analyzer.json

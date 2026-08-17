@@ -2195,12 +2195,12 @@ def run_doctor(args):
                         if sys.platform == "win32":
                             check_info(
                                 f"Install with: cd {PROJECT_ROOT} && "
-                                "npx playwright install chromium"
+                                "python -m playwright install chromium"
                             )
                         else:
                             check_info(
                                 f"Install with: cd {PROJECT_ROOT} && "
-                                "npx playwright install --with-deps chromium"
+                                "python -m playwright install --with-deps chromium"
                             )
     elif _is_termux():
         check_info("Node.js not found (browser tools are optional in the tested Termux path)")

@@ -1,0 +1,5 @@
+- main [ref=e4]:
+  - generic [ref=e8]:
+    - generic: play_arrow
+    - button "Sign in" [ref=e10]:
+      - generic [ref=e13]: Sign in

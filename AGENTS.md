@@ -300,6 +300,8 @@ hermes-agent/
 ├── skills/               # Built-in skills bundled with the repo
 ├── ui-tui/               # Ink (React) terminal UI — `hermes --tui`
 │   └── src/              # entry.tsx, app.tsx, gatewayClient.ts + app/components/hooks/lib
+├── hermes-tui-rust/      # Experimental Rust/Ratatui TUI, standalone for now
+│   └── src/              # app.rs, protocol/, state/, ui/
 ├── tui_gateway/          # Python JSON-RPC backend for the TUI
 ├── acp_adapter/          # ACP server (VS Code / Zed / JetBrains integration)
 ├── cron/                 # Scheduler — jobs.py, scheduler.py
@@ -464,24 +466,29 @@ if canonical == "mycommand":
 
 ---
 
-## TUI Architecture (ui-tui + tui_gateway)
+## TUI Architecture (ui-tui + hermes-tui-rust + tui_gateway)
 
-The TUI is a full replacement for the classic (prompt_toolkit) CLI, activated via `hermes --tui` or `HERMES_TUI=1`.
+The production TUI is the Ink (React) terminal UI activated via `hermes --tui` or `HERMES_TUI=1`. `hermes-tui-rust/` is an experimental Rust/Ratatui implementation that can be run standalone and speaks the same JSON-RPC-over-stdio gateway protocol, but it is not yet wired into the main CLI entrypoint.
 
 ### Process Model
 
-```
+```text
 hermes --tui
   └─ Node (Ink)  ──stdio JSON-RPC──  Python (tui_gateway)
        │                                  └─ AIAgent + tools + sessions
        └─ renders transcript, composer, prompts, activity
+
+# Experimental standalone path
+cd hermes-tui-rust && cargo run
+  └─ Rust (Ratatui/Crossterm) ──stdio JSON-RPC──  Python (tui_gateway)
+       └─ renders Dashboard, IDE, Kanban, and Chat views
 ```
 
-TypeScript owns the screen. Python owns sessions, tools, model calls, and slash command logic.
+TypeScript owns the production screen. The Rust TUI mirrors the gateway protocol and currently renders a native multi-view workspace. Python owns sessions, tools, model calls, and slash command logic.
 
 ### Transport
 
-Newline-delimited JSON-RPC over stdio. Requests from Ink, events from Python. See `tui_gateway/server.py` for the full method/event catalog.
+Newline-delimited JSON-RPC over stdio. Requests from Ink or Rust, events from Python. See `tui_gateway/server.py` for the full method/event catalog.
 
 ### Key Surfaces
 
@@ -503,6 +510,8 @@ Newline-delimited JSON-RPC over stdio. Requests from Ink, events from Python. Se
 
 ### Dev Commands
 
+Ink TUI:
+
 ```bash
 cd ui-tui
 npm install       # first time
@@ -514,6 +523,18 @@ npm run lint      # eslint
 npm run fmt       # prettier
 npm test          # vitest
 ```
+
+Experimental Rust TUI:
+
+```bash
+cd hermes-tui-rust
+cargo run
+cargo test
+cargo fmt
+cargo clippy -- -W clippy::all
+```
+
+Run the Rust TUI from `hermes-tui-rust/` or the repo root so it can discover `tui_gateway/`.
 
 ### TUI in the Dashboard (`hermes dashboard` → `/chat`)
 

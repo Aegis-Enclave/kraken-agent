@@ -2,6 +2,7 @@
 
 Pure display functions with no HermesCLI state dependency.
 """
+
 import json
 import logging
 import os
@@ -405,8 +406,8 @@ def check_for_updates() -> Optional[int]:
     # `/api/hermes/update/check` endpoint short-circuits docker the same way
     # (web_server.py); mirror that here so the banner/TUI surfaces agree.
     try:
-        from hermes_cli.config import detect_install_method, get_project_root
-        if detect_install_method(get_project_root()) == "docker":
+        from hermes_cli.config import detect_install_method
+        if detect_install_method() == "docker":
             return None
     except Exception:
         pass
@@ -1148,7 +1149,6 @@ def build_welcome_banner(console: "Console", model: str, cwd: str,
                 )
 
     right_lines.append("")
-    right_lines.append(f"[bold {accent}]Available Skills[/]")
     # The skills catalog is only reachable when the `skills` toolset is enabled
     # (it exposes skill_view / skill_manage). When it's disabled — e.g. a Blank
     # Slate install — the agent literally cannot load any skill, so advertising
@@ -1162,34 +1162,23 @@ def build_welcome_banner(console: "Console", model: str, cwd: str,
         skills_by_category = {}
         total_skills = 0
 
-    # Dynamically size skills display based on terminal width.
-    # Rich grid with 2 columns; right column gets roughly 60% of terminal.
-    _term_cols = shutil.get_terminal_size().columns
-    _right_col_width = max(int(_term_cols * 0.6) - 10, 30)
+    header_skills = f"[bold {accent}]Available Skills[/]"
+    if _skills_enabled and total_skills > 0:
+        header_skills += f"  [dim {dim}]({total_skills} total)[/]"
+    right_lines.append(header_skills)
 
     if not _skills_enabled:
         right_lines.append(f"[dim {dim}]Skills toolset disabled[/]")
     elif skills_by_category:
         for category in sorted(skills_by_category.keys()):
             skill_names = sorted(skills_by_category[category])
-            # Account for "category: " prefix
-            _prefix_len = len(category) + 2
-            _avail = max(_right_col_width - _prefix_len, 20)
-            # Accumulate skills until we run out of space
-            parts, length = [], 0
-            for i, name in enumerate(skill_names):
-                _sep = ", " if parts else ""
-                _needed = len(_sep) + len(name)
-                # Estimate indicator size IF we were to add this skill then stop
-                _after = len(skill_names) - (i + 1)  # remaining after adding this
-                _ind_len = len(f", +{_after} more") if _after > 0 else 0
-                if parts and length + _needed + _ind_len > _avail:
-                    remaining = len(skill_names) - len(parts)
-                    parts.append(f"+{remaining} more")
-                    break
-                parts.append(name)
-                length += _needed
-            skills_str = ", ".join(parts)
+            if len(skill_names) > 8:
+                display_names = skill_names[:8]
+                skills_str = ", ".join(display_names) + f" +{len(skill_names) - 8} more"
+            else:
+                skills_str = ", ".join(skill_names)
+            if len(skills_str) > 50:
+                skills_str = skills_str[:47] + "..."
             right_lines.append(f"[dim {dim}]{category}:[/] [{text}]{skills_str}[/]")
     else:
         right_lines.append(f"[dim {dim}]No skills installed[/]")
@@ -1239,6 +1228,7 @@ def build_welcome_banner(console: "Console", model: str, cwd: str,
             right_lines.append(_format_update_notice(behind))
     except Exception:
         pass  # Never break the banner over an update check
+
 
     right_content = "\n".join(right_lines)
     layout_table.add_row(left_content, right_content)

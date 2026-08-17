@@ -13530,6 +13530,161 @@ def _model_picker_context(agent):
     )
 
 
+@method("model.options")
+def _(rid, params: dict) -> dict:
+    try:
+        from hermes_cli.inventory import build_model_options_payload
+
+        session = _sessions.get(params.get("session_id", ""))
+        agent = session.get("agent") if session else None
+        # Layer agent-session state on top of disk config — once an agent
+        # is spawned, IT owns the live provider/model/base_url. Empty
+        # agent attributes must NOT clobber disk config (with_overrides
+        # is truthy-only).
+        ctx = _model_picker_context(agent)
+        payload = build_model_options_payload(
+            ctx,
+            explicit_only=bool(params.get("explicit_only")),
+            include_unconfigured=bool(params.get("include_unconfigured")),
+            refresh=bool(params.get("refresh")),
+        )
+        return _ok(rid, payload)
+    except Exception as e:
+        return _err(rid, 5033, str(e))
+
+
+@method("model.save_key")
+def _(rid, params: dict) -> dict:
+    """Save an API key for a provider, then return its refreshed model list.
+
+    Params:
+        slug: provider slug (e.g. "deepseek", "xai")
+        api_key: the key value to save
+
+    Returns the provider dict with models populated (same shape as
+    model.options entries) on success.
+    """
+    try:
+        from hermes_cli.auth import PROVIDER_REGISTRY
+        from hermes_cli.config import is_managed
+        from hermes_cli.inventory import build_models_payload
+
+        slug = (params.get("slug") or "").strip()
+        api_key = (params.get("api_key") or "").strip()
+        if not slug or not api_key:
+            return _err(rid, 4001, "slug and api_key are required")
+
+        if is_managed():
+            return _err(rid, 4006, "managed install — credentials are read-only")
+
+        pconfig = PROVIDER_REGISTRY.get(slug)
+        if not pconfig:
+            return _err(rid, 4002, f"unknown provider: {slug}")
+        if pconfig.auth_type != "api_key":
+            return _err(
+                rid,
+                4003,
+                f"{pconfig.name} uses {pconfig.auth_type} auth — "
+                f"run `hermes model` to configure",
+            )
+        if not pconfig.api_key_env_vars:
+            return _err(rid, 4004, f"no env var defined for {pconfig.name}")
+
+        # Save the key to ~/.hermes/.env via the unified credential lifecycle
+        # so any stale config.yaml mirror of the previous key (model.api_key,
+        # custom_providers[*].api_key) is rotated in the same action (#62269).
+        env_var = pconfig.api_key_env_vars[0]
+        from hermes_cli.credential_lifecycle import save_provider_env_credential
+
+        save_provider_env_credential(env_var, api_key)
+        # Also set in current process so the refreshed inventory sees it.
+        import os
+
+        os.environ[env_var] = api_key
+
+        # Refresh provider data via the shared inventory builder so this
+        # surface stays in lock-step with model.options + dashboard
+        # /api/model/options. picker_hints=True ensures the returned row
+        # carries `authenticated` for the TUI frontend.
+        session = _sessions.get(params.get("session_id", ""))
+        agent = session.get("agent") if session else None
+        ctx = _model_picker_context(agent)
+        payload = build_models_payload(
+            ctx, picker_hints=True, max_models=100,
+        )
+        provider_data = next(
+            (p for p in payload["providers"] if p["slug"] == slug), None
+        )
+        if provider_data is None:
+            # Key was saved but provider didn't appear — still return success.
+            provider_data = {
+                "slug": slug,
+                "name": pconfig.name,
+                "is_current": False,
+                "models": [],
+                "total_models": 0,
+                "authenticated": True,
+            }
+        # picker_hints sets `authenticated` from the row state, but the
+        # synthetic fallback above doesn't go through that path.
+        provider_data["authenticated"] = True
+        return _ok(rid, {"provider": provider_data})
+    except Exception as e:
+        return _err(rid, 5034, str(e))
+
+
+@method("model.disconnect")
+def _(rid, params: dict) -> dict:
+    """Remove credentials for a provider.
+
+    Params:
+        slug: provider slug (e.g. "deepseek", "xai")
+
+    Returns success status and the provider's slug.
+    """
+    try:
+        from hermes_cli.auth import PROVIDER_REGISTRY, clear_provider_auth
+        from hermes_cli.credential_lifecycle import remove_provider_env_credential
+
+        slug = (params.get("slug") or "").strip()
+        if not slug:
+            return _err(rid, 4001, "slug is required")
+
+        pconfig = PROVIDER_REGISTRY.get(slug)
+        cleared_env = False
+        cleared_auth = False
+
+        # Remove API key env vars from .env and process, plus every mirror
+        # (env-seeded credential_pool entries, provider model cache rows,
+        # value-matched config.yaml api_key copies) via the unified helper —
+        # otherwise the provider resurrects in the picker after restart
+        # (#51071 / #59761).
+        if pconfig and pconfig.api_key_env_vars:
+            for ev in pconfig.api_key_env_vars:
+                if remove_provider_env_credential(ev).get("found"):
+                    cleared_env = True
+
+        # Clear OAuth / credential pool state. This is a full provider
+        # disconnect (TUI "disconnect" action), so removing OAuth grants
+        # here is the documented intent — unlike the key-only delete paths.
+        cleared_auth = clear_provider_auth(slug)
+
+        if not cleared_env and not cleared_auth:
+            return _err(rid, 4005, f"no credentials found for {slug}")
+
+        provider_name = pconfig.name if pconfig else slug
+        return _ok(
+            rid,
+            {
+                "slug": slug,
+                "name": provider_name,
+                "disconnected": True,
+            },
+        )
+    except Exception as e:
+        return _err(rid, 5035, str(e))
+
+
 # ── Methods: slash.exec ──────────────────────────────────────────────
 
 

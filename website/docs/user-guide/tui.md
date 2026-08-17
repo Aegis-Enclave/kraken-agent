@@ -49,6 +49,8 @@ display:
 
 With `display.interface: tui`, a bare `hermes` (and `hermes chat`) launches the TUI. Explicit flags always win — run `hermes --cli` to drop back to the classic REPL for a single invocation, or `hermes --tui` / `HERMES_TUI=1` to force the TUI when the config default is `cli`.
 
+The documented TUI above is the production Ink (React) implementation. `hermes-tui-rust/` is an experimental standalone Ratatui/Crossterm TUI that speaks the same `tui_gateway` JSON-RPC protocol, but it is not yet exposed through `hermes --tui-rust`, `display.interface`, or the managed installer.
+
 The classic CLI remains the shipped default. Anything documented in [CLI Interface](cli.md) — slash commands, quick commands, skill preloading, personalities, multi-line input, interrupts — works in the TUI identically.
 
 ## Why the TUI

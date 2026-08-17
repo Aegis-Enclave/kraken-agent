@@ -774,6 +774,66 @@ _BUILTIN_SKINS: Dict[str, Dict[str, Any]] = {
 [#F29C38]⠀⠀⠀⠀⠀⠀⠀⣼⡟⠀⠀⢻⣧⠀⠀⠀⠀⠀⠀⠀⠀[/]
 [dim #7A3511]⠀⠀⠀⠀⠀⠀⠀tail flame lit⠀⠀⠀⠀⠀⠀⠀⠀[/]""",
     },
+    "kraken": {
+        "name": "kraken",
+        "description": "Dark Gothic Kraken — monochromatic abyss",
+        "colors": {
+            "banner_border": "#666666",
+            "banner_title": "#FFFFFF",
+            "banner_accent": "#BBBBBB",
+            "banner_dim": "#666666",
+            "banner_text": "#DDDDDD",
+            "input_area": "#0F0F0F",
+            "input_rule": "#666666",
+            "response_border": "#888888",
+            "status_bar_bg": "#0A0A0A",
+            "status_bar_text": "#CCCCCC",
+            "status_bar_strong": "#FFFFFF",
+            "status_bar_dim": "#666666",
+            "status_bar_good": "#AAAAAA",
+            "status_bar_warn": "#CCCCCC",
+            "status_bar_bad": "#DDDDDD",
+            "status_bar_critical": "#FFFFFF",
+            "status_bar_yolo": "#DDDDDD",
+            "session_label": "#AAAAAA",
+            "session_border": "#666666",
+        },
+        "spinner": {
+            "waiting_faces": ["(≡)", "(≌)", "(‿)", "(◈)", "(Ψ)", "(🦑)"],
+            "thinking_faces": ["(≡)", "(≌)", "(‿)", "(Ψ)", "(◈)", "(⌁)"],
+            "thinking_verbs": [
+                "stirring the abyss", "unfurling tentacles", "charting deep currents",
+                "inking the void", "tangling with the unknown", "sounding the trench",
+                "coiling for strike", "reading pressure ridges", "glowing in the dark",
+                "shedding a bioluminescent tear", "befriending a gulper eel",
+                "counting jellyfish", "spiraling downward", "mapping the sea floor",
+                "teasing the leviathan", "whispering to barnacles",
+            ],
+            "wings": [
+                ["❪≡", "≡❫"],
+                ["❪≌", "≌❫"],
+                ["❪‿", "‿❫"],
+                ["❪◈", "◈❫"],
+                ["❪Ψ", "Ψ❫"],
+            ],
+        },
+        "branding": {
+            "agent_name": "Kraken Agent",
+            "welcome": "Welcome to Kraken Agent! Type your message or /help for commands.",
+            "goodbye": "Descending to the depths! ≡",
+            "response_label": " ≡ Kraken ",
+            "prompt_symbol": "≡",
+            "help_header": "(≡) Available Commands",
+        },
+        "tool_prefix": "│",
+        "banner_logo": """[bold #FFFFFF]██   ██ ██████   █████  ██   ██ ███████ ███    ██      █████   ██████  ███████ ███    ██ ████████[/]
+[bold #CCCCCC]██  ██  ██   ██ ██   ██ ██  ██  ██      ████   ██     ██   ██ ██       ██      ████   ██    ██[/]
+[bold #AAAAAA]█████   ██████  ███████ █████   █████   ██ ██  ██     ███████ ██   ███ █████   ██ ██  ██    ██[/]
+[bold #999999]██  ██  ██   ██ ██   ██ ██  ██  ██      ██  ██ ██     ██   ██ ██    ██ ██      ██  ██ ██    ██[/]
+[bold #777777]██   ██ ██   ██ ██   ██ ██   ██ ███████ ██   ████     ██   ██  ██████  ███████ ██   ████    ██[/]
+[dim #555555]╚╝   ╚╝ ╚╝   ╚╝ ╚╝   ╚╝ ╚╝   ╚╝ ╚═════╝ ╚╝   ╚══╝     ╚╝   ╚╝  ╚════╝  ╚═════╝ ╚╝   ╚══╝    ╚╝[/]""",
+        "banner_hero": """[#CCCCCC]⣴⣶⣤⡤⠦⣤⣀⣤⠆     ⣈⣭⣿⣶⣿⣦⣼⣆          [/]\n[#BBBBBB] ⠉⠻⢿⣿⠿⣿⣿⣶⣦⠤⠄⡠⢾⣿⣿⡿⠋⠉⠉⠻⣿⣿⡛⣦       [/]\n[#CCCCCC]      ⠈⢿⣿⣟⠦ ⣾⣿⣿⣷    ⠻⠿⢿⣿⣧⣄     [/]\n[#BBBBBB]       ⣸⣿⣿⢧ ⢻⠻⣿⣿⣷⣄⣀⠄⠢⣀⡀⠈⠙⠿⠄    [/]\n[#AAAAAA]      ⢠⣿⣿⣿⠈    ⣻⣿⣿⣿⣿⣿⣿⣿⣛⣳⣤⣀⣀   [/]\n[#999999] ⢠⣧⣶⣥⡤⣄ ⣸⣿⣿⠘  ⢀⣴⣿⣿⡿⠛⣿⣿⣧⠈⢿⠿⠟⠛⠻⠿⠄  [/]\n[#888888]⣰⣿⣿⠛⠻⣿⣿⡦⢹⣿⣷   ⢊⣿⣿⡏  ⢸⣿⣿⡇ ⢀⣠⣄⣾⠄   [/]\n[#777777] ⣠⣿⠿⠛ ⢀⣿⣿⣷⠘⢿⣿⣦⡀ ⢸⢿⣿⣿⣄ ⣸⣿⣿⡇⣪⣿⡿⠿⣿⣷⡄  [/]\n[#666666] ⠙⠃   ⣼⣿⡟  ⠈⠻⣿⣿⣦⣌⡇⠻⣿⣿⣷⣿⣿⣿ ⣿⣿⡇ ⠛⠻⢷⣄ [/]\n[#555555]    ⢻⣿⣿⣄   ⠈⠻⣿⣿⣿⣷⣿⣿⣿⣿⣿⡟ ⠫⢿⣿⡆     [/]\n[dim #444444]     ⠻⣿⣿⣿⣿⣶⣶⣾⣿⣿⣿⣿⣿⣿⣿⣿⡟⢀⣀⣤⣾⡿⠃     [/]\n[dim #333333]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀from the abyss⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]""",
+    },
 }
 
 

@@ -215,6 +215,16 @@ from hermes_cli.banner import _format_context_length, format_banner_version_labe
 
 _COMMAND_SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")
 
+# Skin-themed frame sets for the command spinner.
+# Keys are skin names; values are tuples of spinner frames.
+# Falls back to _COMMAND_SPINNER_FRAMES when the active skin has no entry.
+_SKIN_SPINNER_FRAMES: dict[str, tuple[str, ...]] = {
+    "charizard": ("🔥", "✦", "▲", "◇", "✦", "🔥", "▲", "◇", "✦", "🔥"),
+    "ares": ("⚔", "⛨", "▲", "⚔", "⛨", "▲", "⚔", "⛨", "▲", "◇"),
+    "poseidon": ("≈", "Ψ", "∿", "≈", "◌", "∿", "Ψ", "≈", "∿", "◌"),
+    "sisyphus": ("◉", "◬", "◌", "⬤", "◉", "◬", "◌", "○", "◉", "⬤"),
+}
+
 
 # Load .env from ~/.hermes/.env first, then project root as dev fallback.
 # User-managed env files should override stale shell exports on restart.
@@ -385,15 +395,11 @@ def _resolve_prefill_messages_file(config: Dict[str, Any]) -> str:
     return ""
 
 
-def _parse_reasoning_config(effort) -> dict | None:
-    """Parse a reasoning effort level into an OpenRouter reasoning config dict.
-
-    Accepts the raw config value (string or YAML boolean — ``false``/``off``
-    parse as thinking disabled, see parse_reasoning_effort).
-    """
+def _parse_reasoning_config(effort: str) -> dict | None:
+    """Parse a reasoning effort level into an OpenRouter reasoning config dict."""
     from hermes_constants import parse_reasoning_effort
     result = parse_reasoning_effort(effort)
-    if effort and str(effort).strip() and result is None:
+    if effort and effort.strip() and result is None:
         logger.warning("Unknown reasoning_effort '%s', using default (medium)", effort)
     return result
 
@@ -495,9 +501,7 @@ def load_cli_config() -> Dict[str, Any]:
             "resume_max_assistant_chars": 200,
             "resume_max_assistant_lines": 3,
             "resume_skip_tool_only": True,
-            # Live reasoning display default ON — keep in sync with
-            # hermes_cli/config.py DEFAULT_CONFIG (display.show_reasoning).
-            "show_reasoning": True,
+            "show_reasoning": False,
             "reasoning_full": False,
             "streaming": True,
             "busy_input_mode": "interrupt",
@@ -559,10 +563,11 @@ def load_cli_config() -> Dict[str, Any]:
     # Load from file if exists
     if config_path.exists():
         try:
+            import yaml
             with open(config_path, "r", encoding="utf-8") as f:
                 from hermes_cli.config import _normalize_root_model_keys
 
-                file_config = _normalize_root_model_keys(fast_safe_load(f) or {})
+                file_config = _normalize_root_model_keys(yaml.safe_load(f) or {})
             
             _file_has_terminal_config = "terminal" in file_config
 
@@ -680,7 +685,6 @@ def load_cli_config() -> Dict[str, Any]:
         "docker_extra_args": "TERMINAL_DOCKER_EXTRA_ARGS",
         "docker_shm_size": "TERMINAL_DOCKER_SHM_SIZE",
         "docker_mount_cwd_to_workspace": "TERMINAL_DOCKER_MOUNT_CWD_TO_WORKSPACE",
-        "docker_network": "TERMINAL_DOCKER_NETWORK",
         "docker_run_as_host_user": "TERMINAL_DOCKER_RUN_AS_HOST_USER",
         "docker_persist_across_processes": "TERMINAL_DOCKER_PERSIST_ACROSS_PROCESSES",
         "docker_orphan_reaper": "TERMINAL_DOCKER_ORPHAN_REAPER",
@@ -816,14 +820,6 @@ try:
     from agent.display import set_tool_preview_max_len
     _tpl = CLI_CONFIG.get("display", {}).get("tool_preview_length", 0)
     set_tool_preview_max_len(int(_tpl) if _tpl else 0)
-except Exception:
-    pass
-
-# Initialize friendly tool labels from config (default on)
-try:
-    from agent.display import set_friendly_tool_labels
-    _ftl = CLI_CONFIG.get("display", {}).get("friendly_tool_labels", True)
-    set_friendly_tool_labels(bool(_ftl))
 except Exception:
     pass
 
@@ -2347,6 +2343,7 @@ def _prune_stale_worktrees(repo_root: str, max_age_hours: int = 24) -> None:
     """Remove stale worktrees and orphaned branches on startup.
 
     Covers EVERY directory under ``.worktrees/`` except kanban task trees
+    Covers EVERY directory under ``.worktrees/`` except kanban task trees
     (``t_<hex>`` — owned by the kanban dispatcher's own gc). Scratch trees
     created by ``hermes -w`` (``hermes-*``) age out fast; named trees created
     manually for salvage/review lanes age out on a slower schedule:
@@ -2530,7 +2527,6 @@ def _prune_stale_worktrees(repo_root: str, max_age_hours: int = 24) -> None:
                 )
             except Exception as e:
                 logger.debug("Failed to unlock dead worktree %s: %s", entry.name, e)
-
         # Safe to remove
         try:
             branch_result = subprocess.run(
@@ -2539,18 +2535,10 @@ def _prune_stale_worktrees(repo_root: str, max_age_hours: int = 24) -> None:
             )
             branch = branch_result.stdout.strip()
 
-            remove_result = subprocess.run(
+            subprocess.run(
                 ["git", "worktree", "remove", str(entry), "--force"],
                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15, cwd=repo_root,
             )
-            if remove_result.returncode != 0:
-                # Removal failed — keep the branch so any commits stay
-                # reachable rather than orphaning it.
-                logger.debug(
-                    "Failed to remove worktree %s: %s",
-                    entry.name, remove_result.stderr.strip(),
-                )
-                continue
             if branch:
                 subprocess.run(
                     ["git", "branch", "-D", branch],
@@ -3471,26 +3459,6 @@ def _prepend_note_to_message(message, note: str):
     return message
 
 
-def _cli_visible_print(text: str = "") -> None:
-    """Print normally unless prompt_toolkit owns the live terminal.
-
-    Bare ``print()`` output is swallowed by ``patch_stdout`` while an
-    interactive ``Application`` is running, so ``/sessions`` and ``/history``
-    would render nothing. Route through ``_cprint`` (prompt_toolkit-native)
-    in that case, and fall back to ``print`` otherwise.
-    """
-    try:
-        from prompt_toolkit.application import get_app_or_none
-        app = get_app_or_none()
-    except Exception:
-        app = None
-
-    if app is not None and getattr(app, "_is_running", False):
-        _cprint(text)
-    else:
-        print(text)
-
-
 # ---------------------------------------------------------------------------
 # File-drop / local attachment detection — extracted as pure helpers for tests.
 # ---------------------------------------------------------------------------
@@ -4373,29 +4341,41 @@ class ChatConsole:
         yield self
 
 # ASCII Art - HERMES-AGENT logo (full width, single line - requires ~95 char terminal)
-HERMES_AGENT_LOGO = """[bold #FFD700]██╗  ██╗███████╗██████╗ ███╗   ███╗███████╗███████╗       █████╗  ██████╗ ███████╗███╗   ██╗████████╗[/]
-[bold #FFD700]██║  ██║██╔════╝██╔══██╗████╗ ████║██╔════╝██╔════╝      ██╔══██╗██╔════╝ ██╔════╝████╗  ██║╚══██╔══╝[/]
-[#FFBF00]███████║█████╗  ██████╔╝██╔████╔██║█████╗  ███████╗█████╗███████║██║  ███╗█████╗  ██╔██╗ ██║   ██║[/]
-[#FFBF00]██╔══██║██╔══╝  ██╔══██╗██║╚██╔╝██║██╔══╝  ╚════██║╚════╝██╔══██║██║   ██║██╔══╝  ██║╚██╗██║   ██║[/]
-[#CD7F32]██║  ██║███████╗██║  ██║██║ ╚═╝ ██║███████╗███████║      ██║  ██║╚██████╔╝███████╗██║ ╚████║   ██║[/]
-[#CD7F32]╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝╚══════╝      ╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚═══╝   ╚═╝[/]"""
+HERMES_AGENT_LOGO = """[#888888]                     ▄▄██████████████▄▄                     [/]
+[#888888]                  ▄██████████████████████▄                  [/]
+[#888888]                 ██████████████████████████                 [/]
+[#888888]                 ██████████████████████████                 [/]
+[#888888]                 ████▀  ▀██████████▀  ▀████                 [/]
+[#666666]                 ████ ▄▄ ▄████████▄ ▄▄ ████                 [/]
+[#666666]                 ▀████████████████████████▀                 [/]
+[#666666]                  ▀████████▀▀▀▀▀▀████████▀                  [/]
+[#666666]                     ▀▀████▄▄▄▄▄▄████▀▀                     [/]
+[#666666]                                                            [/]
+[#AAAAAA]   ▄█   ▄█▄  █▀██▀██▀██▄  ▄████▄  ▄█   ▄█▄  ▄████████ ███▄▄▄▄   [/]
+[#AAAAAA]  ███ ▄███▀    ██   ██ ▀ ██▀  ▀██ ███ ▄███▀ ███    ███ ███▀▀▀██▄ [/]
+[#AAAAAA]  ███▐██▀      ██   ██   ██    ██ ███▐██▀   ███    █▀  ███   ███ [/]
+[#CCCCCC] ▄█████▀    ▄█████████   ██    ██▄█████▀   ▄███▄▄▄     ███   ███ [/]
+[#CCCCCC]▀▀█████▄   ▀▀████▀█████  ████████▀▀█████▄ ▀▀███▀▀▀     ███   ███ [/]
+[#CCCCCC]  ███▐██▄    ███    ███  ██    ██  ███▐██▄  ███    █▄  ███   ███ [/]
+[#CCCCCC]  ███ ▀███▄  ███    ███  ██    ██  ███ ▀███▄███    ███ ███   ███ [/]
+[#CCCCCC]  ███   ▀█▀  ███    ███  ██    ██  ███   ▀█▀██████████  ▀█   █▀  [/]"""
 
 # ASCII Art - Hermes Caduceus (compact, fits in left panel)
-HERMES_CADUCEUS = """[#CD7F32]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⡀⠀⣀⣀⠀⢀⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#CD7F32]⠀⠀⠀⠀⠀⠀⢀⣠⣴⣾⣿⣿⣇⠸⣿⣿⠇⣸⣿⣿⣷⣦⣄⡀⠀⠀⠀⠀⠀⠀[/]
-[#FFBF00]⠀⢀⣠⣴⣶⠿⠋⣩⡿⣿⡿⠻⣿⡇⢠⡄⢸⣿⠟⢿⣿⢿⣍⠙⠿⣶⣦⣄⡀⠀[/]
-[#FFBF00]⠀⠀⠉⠉⠁⠶⠟⠋⠀⠉⠀⢀⣈⣁⡈⢁⣈⣁⡀⠀⠉⠀⠙⠻⠶⠈⠉⠉⠀⠀[/]
-[#FFD700]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣴⣿⡿⠛⢁⡈⠛⢿⣿⣦⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#FFD700]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠿⣿⣦⣤⣈⠁⢠⣴⣿⠿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#FFBF00]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠉⠻⢿⣿⣦⡉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#FFBF00]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⢷⣦⣈⠛⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#CD7F32]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣴⠦⠈⠙⠿⣦⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#CD7F32]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠸⣿⣤⡈⠁⢤⣿⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#B8860B]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠛⠷⠄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#B8860B]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⠑⢶⣄⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#B8860B]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⠁⢰⡆⠈⡿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#B8860B]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠳⠈⣡⠞⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]
-[#B8860B]⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀[/]"""
+HERMES_CADUCEUS = """[#888888]       ▄▄████████▄▄       [/]
+[#888888]     ▄██████████████▄     [/]
+[#888888]    ████▀▀▀    ▀▀▀████    [/]
+[#666666]   ███▀            ▀███   [/]
+[#666666]  ▐██▌  ▄████████▄  ▐██▌  [/]
+[#666666]  ███  ███▀▀▀▀▀▀███  ███  [/]
+[#AAAAAA]  ██▌ ▐██        ██▌ ▐██  [/]
+[#AAAAAA]  ██▌ ▐██        ██▌ ▐██  [/]
+[#AAAAAA]  ███  ███▄▄▄▄▄▄███  ███  [/]
+[#CCCCCC]  ▐██▌  ▀████████▀  ▐██▌  [/]
+[#CCCCCC]   ███▄            ▄███   [/]
+[#CCCCCC]    ████▄▄▄    ▄▄▄████    [/]
+[#AAAAAA]     ▀██████████████▀     [/]
+[#888888]       ▀▀████████▀▀       [/]
+[#666666]                          [/]"""
 
 
 
@@ -4408,9 +4388,9 @@ def _build_compact_banner() -> str:
         _skin = None
 
     skin_name = getattr(_skin, "name", "default") if _skin else "default"
-    border_color = _skin.get_color("banner_border", "#FFD700") if _skin else "#FFD700"
-    title_color = _skin.get_color("banner_title", "#FFBF00") if _skin else "#FFBF00"
-    dim_color = _skin.get_color("banner_dim", "#B8860B") if _skin else "#B8860B"
+    border_color = _skin.get_color("banner_border", "#888888") if _skin else "#888888"
+    title_color = _skin.get_color("banner_title", "#CCCCCC") if _skin else "#CCCCCC"
+    dim_color = _skin.get_color("banner_dim", "#AAAAAA") if _skin else "#AAAAAA"
 
     if skin_name == "default":
         line1 = "⚕ NOUS HERMES - AI Agent Framework"
@@ -4735,7 +4715,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         # bell_on_complete: play terminal bell (\a) when agent finishes a response
         self.bell_on_complete = CLI_CONFIG["display"].get("bell_on_complete", False)
         # show_reasoning: display model thinking/reasoning before the response
-        self.show_reasoning = CLI_CONFIG["display"].get("show_reasoning", True)
+        self.show_reasoning = CLI_CONFIG["display"].get("show_reasoning", False)
         # reasoning_full: when reasoning display is on, print the post-response
         # recap box uncollapsed instead of clamping to the first 10 lines.
         self.reasoning_full = CLI_CONFIG["display"].get("reasoning_full", False)
@@ -4763,9 +4743,8 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         
         # streaming: stream tokens to the terminal as they arrive (display.streaming in config.yaml)
         self.streaming_enabled = CLI_CONFIG["display"].get("streaming", False)
-        # show_timestamps: prefix user and assistant labels with timestamps
+        # show_timestamps: prefix user and assistant labels with [HH:MM]
         self.show_timestamps = CLI_CONFIG["display"].get("timestamps", False)
-        self.timestamp_format = CLI_CONFIG["display"].get("timestamp_format", "%H:%M")
         self.final_response_markdown = str(
             CLI_CONFIG["display"].get("final_response_markdown", "strip")
         ).strip().lower() or "strip"
@@ -5921,10 +5900,22 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         if len(model_short) > 26:
             model_short = f"{model_short[:23]}..."
 
+        # Provider info (from agent or CLI)
+        provider = getattr(agent, "provider", None) or getattr(self, "provider", None) or "unknown"
+        provider_short = provider.split("/")[-1] if "/" in provider else provider
+
+        # Session info
+        session_id = getattr(agent, "session_id", None) or getattr(self, "session_id", None) or ""
+        session_short = session_id[:8] if session_id else ""
+
         elapsed_seconds = max(0.0, (datetime.now() - self.session_start).total_seconds())
         snapshot = {
             "model_name": model_name,
             "model_short": model_short,
+            "provider": provider,
+            "provider_short": provider_short,
+            "session_id": session_id,
+            "session_short": session_short,
             "duration": format_duration_compact(elapsed_seconds),
             "session_title": self._get_status_bar_session_title(),
             "prompt_elapsed": self._format_prompt_elapsed(
@@ -5947,10 +5938,18 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             "session_completion_tokens": 0,
             "session_total_tokens": 0,
             "session_api_calls": 0,
+            "session_estimated_cost_usd": 0.0,
+            "session_turn_count": 0,
             "compressions": 0,
             "active_background_tasks": 0,
             "active_background_processes": 0,
+            "active_subagents": 0,
             "active_background_subagents": 0,
+            "cwd": "",
+            "git_branch": "",
+            "reasoning_effort": "",
+            "show_reasoning": False,
+            "agent_alive_frame": "",
             "battery_label": "",
             "battery_category": "dim",
             # Focus view badge (/focus). Persistent indicator so the reduced
@@ -6002,6 +6001,66 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         except Exception:
             pass
 
+        # Git branch detection (cached, cheap)
+        try:
+            import subprocess
+            result = subprocess.run(
+                ["git", "branch", "--show-current"],
+                capture_output=True,
+                text=True,
+                timeout=0.5,
+                cwd=getattr(self, "cwd", None) or os.getcwd(),
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                snapshot["git_branch"] = result.stdout.strip()
+        except Exception:
+            pass
+
+        # CWD — cheap os.getcwd() at snapshot time; shorten for display
+        try:
+            raw_cwd = os.getcwd()
+            home = os.path.expanduser("~")
+            if raw_cwd.startswith(home + os.sep) or raw_cwd == home:
+                cwd = "~" + raw_cwd[len(home):]
+            else:
+                cwd = raw_cwd
+            # Shorten to last 2 path components for compact status bar display.
+            # e.g. "~/.hermes/hermes-agent" → "hermes-agent"
+            # e.g. "~/projects/my-app/src" → "my-app/src"
+            parts = cwd.replace("\\", "/").strip("/").split("/")
+            if len(parts) >= 3:
+                cwd = "/".join(parts[-2:])
+            elif len(parts) == 0:
+                cwd = "/"
+            snapshot["cwd"] = cwd
+        except Exception:
+            snapshot["cwd"] = ""
+
+
+        # Animated agent-running indicator — cycles through the skin's
+        # waiting_faces when the agent is processing a user request.
+        if getattr(self, "_agent_running", False):
+            snapshot["agent_alive_frame"] = _COMMAND_SPINNER_FRAMES[int(time.monotonic() * 4) % len(_COMMAND_SPINNER_FRAMES)]
+            try:
+                m = __import__("hermes_cli.skin_engine", fromlist=["get_active_skin"])
+                sk = m.get_active_skin()
+                if sk and sk.spinner:
+                    fc = sk.spinner.get("waiting_faces", [])
+                    if fc:
+                        snapshot["agent_alive_frame"] = fc[int(time.monotonic() * 4) % len(fc)]
+            except Exception:
+                pass
+
+        # Reasoning configuration & display toggle — available on CLI object,
+        # populated before the agent guard so it works even when idle.
+        try:
+            rc = getattr(self, "reasoning_config", None) or {}
+            effort = rc.get("effort", "") if isinstance(rc, dict) and rc.get("enabled") else ""
+            snapshot["reasoning_effort"] = effort
+            snapshot["show_reasoning"] = bool(getattr(self, "show_reasoning", False))
+        except Exception:
+            pass
+
         # Count live background/async subagents (delegate_task batches and
         # background single delegations tracked by tools.async_delegation).
         # active_count() iterates an in-memory records dict under a lock —
@@ -6041,6 +6100,15 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         snapshot["session_completion_tokens"] = getattr(agent, "session_completion_tokens", 0) or 0
         snapshot["session_total_tokens"] = getattr(agent, "session_total_tokens", 0) or 0
         snapshot["session_api_calls"] = getattr(agent, "session_api_calls", 0) or 0
+        snapshot["session_estimated_cost_usd"] = getattr(agent, "session_estimated_cost_usd", 0.0) or 0.0
+        snapshot["session_turn_count"] = getattr(agent, "_user_turn_count", 0) or 0
+
+        # Active subagents (delegate_task children)
+        try:
+            children = getattr(agent, "_active_children", None) or []
+            snapshot["active_subagents"] = len(children)
+        except Exception:
+            pass
 
         compressor = getattr(agent, "context_compressor", None)
         if compressor:
@@ -6060,6 +6128,20 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             snapshot["compressions"] = getattr(compressor, "compression_count", 0) or 0
             if context_length:
                 snapshot["context_percent"] = max(0, min(100, round((context_tokens / context_length) * 100)))
+
+        # If the agent is actively running, animate the indicator using the
+        # skin's waiting_faces for a lively pulsing busy indicator.
+        if getattr(self, "_agent_running", False):
+            snapshot["agent_alive_frame"] = _COMMAND_SPINNER_FRAMES[int(time.monotonic() * 4) % len(_COMMAND_SPINNER_FRAMES)]
+            try:
+                m = __import__("hermes_cli.skin_engine", fromlist=["get_active_skin"])
+                sk = m.get_active_skin()
+                if sk and sk.spinner:
+                    fc = sk.spinner.get("waiting_faces", [])
+                    if fc:
+                        snapshot["agent_alive_frame"] = fc[int(time.monotonic() * 4) % len(fc)]
+            except Exception:
+                pass
 
         return snapshot
 
@@ -6264,7 +6346,18 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         txt = getattr(self, "_spinner_text", "")
         if not txt:
             return ""
-        flow = self._spinner_token_flow()
+        # Prepend a skin-themed animated face when available
+        face = ""
+        try:
+            from hermes_cli.skin_engine import get_active_skin
+            skin = get_active_skin()
+            if skin and skin.spinner:
+                think_faces = skin.spinner.get("thinking_faces", [])
+                if think_faces:
+                    idx = int(time.monotonic() * 4) % len(think_faces)
+                    face = f"{think_faces[idx]} "
+        except Exception:
+            pass
         t0 = getattr(self, "_tool_start_time", 0) or 0
         if t0 > 0:
             elapsed = time.monotonic() - t0
@@ -6276,12 +6369,8 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             else:
                 # Keep width stable before the 60s rollover as well.
                 elapsed_str = f"{elapsed:5.1f}s"
-            if flow:
-                return f"  {txt}  ({elapsed_str} · {flow})"
-            return f"  {txt}  ({elapsed_str})"
-        if flow:
-            return f"  {txt}  ({flow})"
-        return f"  {txt}"
+            return f"  {face}{txt}  ({elapsed_str})"
+        return f"  {face}{txt}"
 
     # ── Per-turn accounting (display.turn_summary / spinner_token_flow) ──
     #
@@ -6675,26 +6764,38 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             percent = snapshot["context_percent"]
             percent_label = f"{percent}%" if percent is not None else "--"
             duration_label = snapshot["duration"]
+            provider_short = snapshot.get("provider_short", "")
+            session_short = snapshot.get("session_short", "")
+            cost_usd = snapshot.get("session_estimated_cost_usd", 0.0)
+            turn_count = snapshot.get("session_turn_count", 0)
+            git_branch = snapshot.get("git_branch", "")
             battery_label = snapshot.get("battery_label") or ""
             battery_prefix = f"{battery_label} │ " if battery_label else ""
             focus_label = snapshot.get("focus_label") or ""
             session_title = snapshot.get("session_title") or ""
 
             yolo_active = self._is_session_yolo_active()
-            goal_segment = self._status_bar_goal_segment(snapshot)
+
+            # Ultra-narrow: < 52 cols - absolute minimum
             if width < 52:
-                text = f"{battery_prefix}⚕ {snapshot['model_short']} · {duration_label}"
-                if goal_segment:
-                    text += f" · {goal_segment}"
-                if focus_label:
-                    text += f" · {focus_label}"
+                agent_frame = snapshot.get("agent_alive_frame", "")
+                prefix = agent_frame if agent_frame else "⚕"
+                text = f"{prefix} {snapshot['model_short']}"
+                if provider_short:
+                    text += f" · {provider_short}"
+                text += f" · {duration_label}"
                 if yolo_active:
                     text += " · ⚠ YOLO"
-                return self._right_align_status_title(text, session_title, width)
-            if width < 76:
-                parts = [f"⚕ {snapshot['model_short']}", percent_label]
-                if battery_label:
-                    parts.insert(0, battery_label)
+                return self._trim_status_bar_text(text, width)
+
+            # Very narrow: 52-63 cols - model + provider + context %
+            if width < 64:
+                agent_frame = snapshot.get("agent_alive_frame", "")
+                prefix = agent_frame if agent_frame else "⚕"
+                parts = [f"{prefix} {snapshot['model_short']}"]
+                if provider_short:
+                    parts.append(provider_short)
+                parts.append(percent_label)
                 compressions = snapshot.get("compressions", 0)
                 if compressions:
                     parts.append(f"🗜️ {compressions}")
@@ -6704,6 +6805,9 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                 bg_proc_count = snapshot.get("active_background_processes", 0)
                 if bg_proc_count:
                     parts.append(f"⚙ {bg_proc_count}")
+                sub_count = snapshot.get("active_subagents", 0)
+                if sub_count:
+                    parts.append(f"✦ {sub_count}")
                 bg_subagent_count = snapshot.get("active_background_subagents", 0)
                 if bg_subagent_count:
                     parts.append(f"⛓ {bg_subagent_count}")
@@ -6716,6 +6820,83 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                     parts.append("⚠ YOLO")
                 return self._right_align_status_title(" · ".join(parts), session_title, width)
 
+            # Narrow: 64-79 cols - add session + cost
+            if width < 80:
+                agent_frame = snapshot.get("agent_alive_frame", "")
+                prefix = agent_frame if agent_frame else "⚕"
+                parts = [f"{prefix} {snapshot['model_short']}"]
+                if provider_short:
+                    parts.append(provider_short)
+                if session_short:
+                    parts.append(f"#{session_short}")
+                if snapshot["context_length"]:
+                    ctx_total = _format_context_length(snapshot["context_length"])
+                    ctx_used = format_token_count_compact(snapshot["context_tokens"])
+                    parts.append(f"{ctx_used}/{ctx_total}")
+                else:
+                    parts.append(percent_label)
+                compressions = snapshot.get("compressions", 0)
+                if compressions:
+                    parts.append(f"🗜️ {compressions}")
+                bg_count = snapshot.get("active_background_tasks", 0)
+                if bg_count:
+                    parts.append(f"▶ {bg_count}")
+                bg_proc_count = snapshot.get("active_background_processes", 0)
+                if bg_proc_count:
+                    parts.append(f"⚙ {bg_proc_count}")
+                sub_count = snapshot.get("active_subagents", 0)
+                if sub_count:
+                    parts.append(f"✦ {sub_count}")
+                if cost_usd > 0:
+                    parts.append(f"${cost_usd:.4f}")
+                if turn_count:
+                    parts.append(f"#{turn_count}")
+                parts.append(duration_label)
+                prompt_elapsed = snapshot.get("prompt_elapsed")
+                if prompt_elapsed:
+                    parts.append(prompt_elapsed)
+                if yolo_active:
+                    parts.append("⚠ YOLO")
+                return self._trim_status_bar_text(" · ".join(parts), width)
+
+            # Medium: 80-99 cols - add git branch + visual context bar
+            if width < 100:
+                if snapshot["context_length"]:
+                    ctx_total = _format_context_length(snapshot["context_length"])
+                    ctx_used = format_token_count_compact(snapshot["context_tokens"])
+                    context_label = f"{ctx_used}/{ctx_total}"
+                else:
+                    context_label = "ctx --"
+
+                compressions = snapshot.get("compressions", 0)
+                agent_frame = snapshot.get("agent_alive_frame", "")
+                prefix = agent_frame if agent_frame else "⚕"
+                parts = [f"{prefix} {snapshot['model_short']}"]
+                parts.append(context_label)
+                parts.append(percent_label)
+                # Visual context bar (10 chars)
+                if snapshot["context_length"]:
+                    parts.append(self._build_context_bar(percent, 10))
+                if compressions:
+                    parts.append(f"🗜️ {compressions}")
+                bg_count = snapshot.get("active_background_tasks", 0)
+                if bg_count:
+                    parts.append(f"▶ {bg_count}")
+                bg_proc_count = snapshot.get("active_background_processes", 0)
+                if bg_proc_count:
+                    parts.append(f"⚙ {bg_proc_count}")
+                sub_count = snapshot.get("active_subagents", 0)
+                if sub_count:
+                    parts.append(f"✦ {sub_count}")
+                parts.append(duration_label)
+                prompt_elapsed = snapshot.get("prompt_elapsed")
+                if prompt_elapsed:
+                    parts.append(prompt_elapsed)
+                if yolo_active:
+                    parts.append("⚠ YOLO")
+                return self._trim_status_bar_text(" │ ".join(parts), width)
+
+            # Wide: 100+ cols - full layout with all info
             if snapshot["context_length"]:
                 ctx_total = _format_context_length(snapshot["context_length"])
                 ctx_used = format_token_count_compact(snapshot["context_tokens"])
@@ -6724,9 +6905,18 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                 context_label = "ctx --"
 
             compressions = snapshot.get("compressions", 0)
-            parts = [f"⚕ {snapshot['model_short']}", context_label, percent_label]
-            if battery_label:
-                parts.insert(0, battery_label)
+            agent_frame = snapshot.get("agent_alive_frame", "")
+            prefix = agent_frame if agent_frame else "⚕"
+            parts = [f"{prefix} {snapshot['model_short']}"]
+            if provider_short:
+                parts.append(provider_short)
+            if session_short:
+                parts.append(f"#{session_short}")
+            parts.append(context_label)
+            parts.append(percent_label)
+            # Visual context bar (15 chars for wide)
+            if snapshot["context_length"]:
+                parts.append(self._build_context_bar(percent, 15))
             if compressions:
                 parts.append(f"🗜️ {compressions}")
             bg_count = snapshot.get("active_background_tasks", 0)
@@ -6735,11 +6925,21 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             bg_proc_count = snapshot.get("active_background_processes", 0)
             if bg_proc_count:
                 parts.append(f"⚙ {bg_proc_count}")
+            sub_count = snapshot.get("active_subagents", 0)
+            if sub_count:
+                parts.append(f"✦ {sub_count}")
             bg_subagent_count = snapshot.get("active_background_subagents", 0)
             if bg_subagent_count:
                 parts.append(f"⛓ {bg_subagent_count}")
-            if goal_segment:
-                parts.append(goal_segment)
+            if cost_usd > 0:
+                parts.append(f"${cost_usd:.4f}")
+            if turn_count:
+                parts.append(f"#{turn_count}")
+            if git_branch:
+                parts.append(f"git:{git_branch}")
+            cwd = snapshot.get("cwd", "")
+            if cwd:
+                parts.append(f"📁 {cwd}")
             parts.append(duration_label)
             prompt_elapsed = snapshot.get("prompt_elapsed")
             if prompt_elapsed:
@@ -6756,183 +6956,404 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             return f"⚕ {self.model if getattr(self, 'model', None) else 'Hermes'}"
 
     def _get_status_bar_fragments(self):
+        """Return fragments for the TOP status bar line (above the prompt input).
+
+        Shows: status face, model, provider, session, context usage, visual
+        context bar, reasoning-effort badge, think badge, duration, and YOLO.
+        """
         if not self._status_bar_visible or getattr(self, '_model_picker_state', None):
             return []
         try:
             snapshot = self._get_status_bar_snapshot()
-            # Use prompt_toolkit's own terminal width when running inside the
-            # TUI — shutil.get_terminal_size() can return stale or fallback
-            # values (especially on SSH) that differ from what prompt_toolkit
-            # actually renders, causing the fragments to overflow to a second
-            # line and produce duplicated status bar rows over long sessions.
-            width = self._get_tui_terminal_width()
-            duration_label = snapshot["duration"]
-            yolo_active = self._is_session_yolo_active()
-            goal_segment = self._status_bar_goal_segment(snapshot)
-            battery_label = snapshot.get("battery_label") or ""
-            battery_style = self._battery_status_style(snapshot.get("battery_category", "dim"))
-            focus_label = snapshot.get("focus_label") or ""
-            session_title = snapshot.get("session_title") or ""
+            return self._build_top_bar_fragments(snapshot, self._get_tui_terminal_width())
+        except Exception:
+            return [("class:status-bar", f" {self._build_status_bar_text()} ")]
 
-            if width < 52:
-                frags = [
-                    ("class:status-bar", " ⚕ "),
-                    ("class:status-bar-strong", snapshot["model_short"]),
-                    ("class:status-bar-dim", " · "),
-                    ("class:status-bar-dim", duration_label),
-                ]
-                if goal_segment:
-                    frags.append(("class:status-bar-dim", " · "))
-                    frags.append(("class:status-bar-strong", goal_segment))
-                if focus_label:
-                    frags.append(("class:status-bar-dim", " · "))
-                    frags.append(("class:status-bar-strong", focus_label))
-                if yolo_active:
-                    frags.append(("class:status-bar-dim", " · "))
-                    frags.append(("class:status-bar-yolo", "⚠ YOLO"))
-                frags.append(("class:status-bar", " "))
-            else:
-                percent = snapshot["context_percent"]
-                percent_label = f"{percent}%" if percent is not None else "--"
-                if width < 76:
-                    compressions = snapshot.get("compressions", 0)
-                    bg_count = snapshot.get("active_background_tasks", 0)
-                    bg_proc_count = snapshot.get("active_background_processes", 0)
-                    bg_subagent_count = snapshot.get("active_background_subagents", 0)
-                    frags = [
-                        ("class:status-bar", " ⚕ "),
-                        ("class:status-bar-strong", snapshot["model_short"]),
-                        ("class:status-bar-dim", " · "),
-                        (self._status_bar_context_style(percent), percent_label),
-                    ]
-                    if compressions:
-                        frags.append(("class:status-bar-dim", " · "))
-                        frags.append((self._compression_count_style(compressions), f"🗜️ {compressions}"))
-                    if bg_count:
-                        frags.append(("class:status-bar-dim", " · "))
-                        frags.append(("class:status-bar-strong", f"▶ {bg_count}"))
-                    if bg_proc_count:
-                        frags.append(("class:status-bar-dim", " · "))
-                        frags.append(("class:status-bar-strong", f"⚙ {bg_proc_count}"))
-                    if bg_subagent_count:
-                        frags.append(("class:status-bar-dim", " · "))
-                        frags.append(("class:status-bar-strong", f"⛓ {bg_subagent_count}"))
-                    if goal_segment:
-                        frags.append(("class:status-bar-dim", " · "))
-                        frags.append(("class:status-bar-strong", goal_segment))
-                    frags.extend([
-                        ("class:status-bar-dim", " · "),
-                        ("class:status-bar-dim", duration_label),
-                    ])
-                    if focus_label:
-                        frags.append(("class:status-bar-dim", " · "))
-                        frags.append(("class:status-bar-strong", focus_label))
-                    if yolo_active:
-                        frags.append(("class:status-bar-dim", " · "))
-                        frags.append(("class:status-bar-yolo", "⚠ YOLO"))
-                    frags.append(("class:status-bar", " "))
-                else:
-                    if snapshot["context_length"]:
-                        ctx_total = _format_context_length(snapshot["context_length"])
-                        ctx_used = format_token_count_compact(snapshot["context_tokens"])
-                        context_label = f"{ctx_used}/{ctx_total}"
-                    else:
-                        context_label = "ctx --"
+    def _get_status_bar_fragments_bottom(self):
+        """Return fragments for the BOTTOM status bar line (below the prompt input).
 
-                    bar_style = self._status_bar_context_style(percent)
-                    compressions = snapshot.get("compressions", 0)
-                    bg_count = snapshot.get("active_background_tasks", 0)
-                    bg_proc_count = snapshot.get("active_background_processes", 0)
-                    bg_subagent_count = snapshot.get("active_background_subagents", 0)
-                    frags = [
-                        ("class:status-bar", " ⚕ "),
-                        ("class:status-bar-strong", snapshot["model_short"]),
-                        ("class:status-bar-dim", " │ "),
-                        ("class:status-bar-dim", context_label),
-                        ("class:status-bar-dim", " │ "),
-                        (bar_style, self._build_context_bar(percent)),
-                        ("class:status-bar-dim", " "),
-                        (bar_style, percent_label),
-                    ]
-                    if compressions:
-                        frags.append(("class:status-bar-dim", " │ "))
-                        frags.append((self._compression_count_style(compressions), f"🗜️ {compressions}"))
-                    if bg_count:
-                        frags.append(("class:status-bar-dim", " │ "))
-                        frags.append(("class:status-bar-strong", f"▶ {bg_count}"))
-                    if bg_proc_count:
-                        frags.append(("class:status-bar-dim", " │ "))
-                        frags.append(("class:status-bar-strong", f"⚙ {bg_proc_count}"))
-                    if bg_subagent_count:
-                        frags.append(("class:status-bar-dim", " │ "))
-                        frags.append(("class:status-bar-strong", f"⛓ {bg_subagent_count}"))
-                    if goal_segment:
-                        frags.append(("class:status-bar-dim", " │ "))
-                        frags.append(("class:status-bar-strong", goal_segment))
-                    frags.extend([
-                        ("class:status-bar-dim", " │ "),
-                        ("class:status-bar-dim", duration_label),
-                    ])
-                    # Position 7: per-prompt elapsed timer (live or frozen)
-                    prompt_elapsed = snapshot.get("prompt_elapsed")
-                    if prompt_elapsed:
-                        frags.append(("class:status-bar-dim", " │ "))
-                        frags.append(("class:status-bar-dim", prompt_elapsed))
-                    # Position 8: idle time since the last final agent response
-                    idle_since = snapshot.get("idle_since")
-                    if idle_since:
-                        frags.append(("class:status-bar-dim", " │ "))
-                        frags.append(("class:status-bar-dim", idle_since))
-                    # Persistent focus-view badge — so the reduced-output mode
-                    # is never invisible (mirrors the YOLO badge convention).
-                    if focus_label:
-                        frags.append(("class:status-bar-dim", " │ "))
-                        frags.append(("class:status-bar-strong", focus_label))
-                    if yolo_active:
-                        frags.append(("class:status-bar-dim", " │ "))
-                        frags.append(("class:status-bar-yolo", "⚠ YOLO"))
-                    frags.append(("class:status-bar", " "))
+        Shows: compressions, background tasks/processes, subagents, cost, turn
+        count, git branch, cwd, prompt elapsed, idle time, and YOLO badge.
+        """
+        if not self._status_bar_visible or getattr(self, '_model_picker_state', None):
+            return []
+        try:
+            snapshot = self._get_status_bar_snapshot()
+            return self._build_bottom_bar_fragments(snapshot, self._get_tui_terminal_width())
+        except Exception:
+            return []
 
-            # Stash indicator (📌 N) — appended after all width tiers so the
-            # user always knows a parked draft exists, even on narrow
-            # terminals.  Placed before the battery prepend so it stays at the
-            # right edge, and it is the first thing the width trim below drops
-            # if the bar genuinely cannot fit.
-            try:
-                stash_indicator = self._prompt_stash.indicator()
-            except Exception:
-                stash_indicator = ""
-            if stash_indicator:
-                # Insert before the trailing pad fragment so the bar keeps its
-                # one-cell right margin.
-                if frags and frags[-1] == ("class:status-bar", " "):
-                    frags[-1:-1] = [
-                        ("class:status-bar-dim", " · "),
-                        ("class:status-bar-strong", stash_indicator),
-                    ]
-                else:
-                    frags.append(("class:status-bar-dim", " · "))
-                    frags.append(("class:status-bar-strong", stash_indicator))
+    def _build_top_bar_fragments(self, snapshot: dict, width: int) -> list:
+        """Build the top status bar line — face, model, provider, context, reasoning badge."""
+        duration_label = snapshot["duration"]
+        yolo_active = self._is_session_yolo_active()
+        provider_short = snapshot.get("provider_short", "")
+        session_short = snapshot.get("session_short", "")
+        percent = snapshot["context_percent"]
+        percent_label = f"{percent}%" if percent is not None else "--"
+        agent_frame = snapshot.get("agent_alive_frame", "")
+        prefix = agent_frame if agent_frame else "⚕"
+        battery_label = snapshot.get("battery_label") or ""
+        battery_style = self._battery_status_style(snapshot.get("battery_category", "dim"))
 
-            # Battery is the first status-bar element when enabled: prepend it
-            # ahead of the leading ⚕ marker in whichever width tier ran above.
+        # Ultra-narrow: < 52 cols — absolute minimum
+        if width < 52:
+            frags = []
             if battery_label:
+                # Upstream: prepend battery with separator
                 frags[0:0] = [
                     ("class:status-bar", " "),
                     (battery_style, battery_label),
-                    ("class:status-bar-dim", " │"),
+                    ("class:status-bar-dim", " │ "),
                 ]
-
-            frags = self._right_align_status_title_fragments(frags, session_title, width)
-
+            # Fork: model, provider, duration, YOLO
+            frags.append(("class:status-bar", f" {prefix} "))
+            frags.append(("class:status-bar-strong", snapshot["model_short"]))
+            if provider_short:
+                frags.append(("class:status-bar-dim", " · "))
+                frags.append(("class:status-bar-strong", provider_short))
+            frags.append(("class:status-bar-dim", " · "))
+            frags.append(("class:status-bar-dim", duration_label))
+            if yolo_active:
+                frags.append(("class:status-bar-dim", " · "))
+                frags.append(("class:status-bar-yolo", "⚠ YOLO"))
+            frags.append(("class:status-bar", " "))
             total_width = sum(self._status_bar_display_width(text) for _, text in frags)
             if total_width > width:
                 plain_text = "".join(text for _, text in frags)
                 trimmed = self._trim_status_bar_text(plain_text, width)
                 return [("class:status-bar", trimmed)]
             return frags
-        except Exception:
-            return [("class:status-bar", f" {self._build_status_bar_text()} ")]
+
+        # Very narrow: 52-63 cols — model + provider + context %
+        if width < 64:
+            frags = [
+                ("class:status-bar", f" {prefix} "),
+                ("class:status-bar-strong", snapshot["model_short"]),
+            ]
+            if provider_short:
+                frags.append(("class:status-bar-dim", " · "))
+                frags.append(("class:status-bar-strong", provider_short))
+            frags.append(("class:status-bar-dim", " · "))
+            frags.append((self._status_bar_context_style(percent), percent_label))
+            frags.append(("class:status-bar-dim", " · "))
+            frags.append(("class:status-bar-dim", duration_label))
+            if yolo_active:
+                frags.append(("class:status-bar-dim", " · "))
+                frags.append(("class:status-bar-yolo", "⚠ YOLO"))
+            frags.append(("class:status-bar", " "))
+            total_width = sum(self._status_bar_display_width(text) for _, text in frags)
+            if total_width > width:
+                plain_text = "".join(text for _, text in frags)
+                trimmed = self._trim_status_bar_text(plain_text, width)
+                return [("class:status-bar", trimmed)]
+            return frags
+
+        # Narrow: 64-79 cols — add session + context tokens
+        if width < 80:
+            frags = [
+                ("class:status-bar", f" {prefix} "),
+                ("class:status-bar-strong", snapshot["model_short"]),
+            ]
+            if provider_short:
+                frags.append(("class:status-bar-dim", " · "))
+                frags.append(("class:status-bar-strong", provider_short))
+            if session_short:
+                frags.append(("class:status-bar-dim", " · "))
+                frags.append(("class:status-bar-dim", f"#{session_short}"))
+            if snapshot["context_length"]:
+                ctx_total = _format_context_length(snapshot["context_length"])
+                ctx_used = format_token_count_compact(snapshot["context_tokens"])
+                frags.append(("class:status-bar-dim", " · "))
+                frags.append(("class:status-bar-dim", f"{ctx_used}/{ctx_total}"))
+                frags.append(("class:status-bar-dim", " · "))
+                frags.append((self._status_bar_context_style(percent), percent_label))
+            else:
+                frags.append(("class:status-bar-dim", " · "))
+                frags.append((self._status_bar_context_style(percent), percent_label))
+            frags.append(("class:status-bar-dim", " · "))
+            frags.append(("class:status-bar-dim", duration_label))
+            if yolo_active:
+                frags.append(("class:status-bar-dim", " · "))
+                frags.append(("class:status-bar-yolo", "⚠ YOLO"))
+            frags.append(("class:status-bar", " "))
+            total_width = sum(self._status_bar_display_width(text) for _, text in frags)
+            if total_width > width:
+                plain_text = "".join(text for _, text in frags)
+                trimmed = self._trim_status_bar_text(plain_text, width)
+                return [("class:status-bar", trimmed)]
+            return frags
+
+        # Medium: 80-99 cols — add visual context bar, reasoning badge
+        if width < 100:
+            if snapshot["context_length"]:
+                ctx_total = _format_context_length(snapshot["context_length"])
+                ctx_used = format_token_count_compact(snapshot["context_tokens"])
+                context_label = f"{ctx_used}/{ctx_total}"
+            else:
+                context_label = "ctx --"
+
+            bar_style = self._status_bar_context_style(percent)
+            reasoning_label = snapshot.get("reasoning_effort", "")
+            show_reasoning = snapshot.get("show_reasoning", False)
+            frags = [
+                ("class:status-bar", f" {prefix} "),
+                ("class:status-bar-strong", snapshot["model_short"]),
+                ("class:status-bar-dim", " │ "),
+                ("class:status-bar-dim", context_label),
+                ("class:status-bar-dim", " │ "),
+                (bar_style, self._build_context_bar(percent)),
+                ("class:status-bar-dim", " "),
+                (bar_style, percent_label),
+            ]
+            # Reasoning effort badge (e.g. "high", "med")
+            if reasoning_label:
+                frags.append(("class:status-bar-dim", " │ "))
+                frags.append(("class:status-bar-reasoning", reasoning_label))
+            # Think display badge
+            if show_reasoning and not reasoning_label:
+                frags.append(("class:status-bar-dim", " │ "))
+                frags.append(("class:status-bar-reasoning", "think"))
+            frags.append(("class:status-bar-dim", " │ "))
+            frags.append(("class:status-bar-dim", duration_label))
+            if yolo_active:
+                frags.append(("class:status-bar-dim", " │ "))
+                frags.append(("class:status-bar-yolo", "⚠ YOLO"))
+            frags.append(("class:status-bar", " "))
+            total_width = sum(self._status_bar_display_width(text) for _, text in frags)
+            if total_width > width:
+                plain_text = "".join(text for _, text in frags)
+                trimmed = self._trim_status_bar_text(plain_text, width)
+                return [("class:status-bar", trimmed)]
+            return frags
+
+        # Wide: 100+ cols — full layout with provider, session, reasoning
+        if snapshot["context_length"]:
+            ctx_total = _format_context_length(snapshot["context_length"])
+            ctx_used = format_token_count_compact(snapshot["context_tokens"])
+            context_label = f"{ctx_used}/{ctx_total}"
+        else:
+            context_label = "ctx --"
+
+        bar_style = self._status_bar_context_style(percent)
+        reasoning_label = snapshot.get("reasoning_effort", "")
+        show_reasoning = snapshot.get("show_reasoning", False)
+        frags = [
+            ("class:status-bar", f" {prefix} "),
+            ("class:status-bar-strong", snapshot["model_short"]),
+        ]
+        if provider_short:
+            frags.append(("class:status-bar-dim", " │ "))
+            frags.append(("class:status-bar-strong", provider_short))
+        if session_short:
+            frags.append(("class:status-bar-dim", " │ "))
+            frags.append(("class:status-bar-dim", f"#{session_short}"))
+        frags.append(("class:status-bar-dim", " │ "))
+        frags.append(("class:status-bar-dim", context_label))
+        frags.append(("class:status-bar-dim", " │ "))
+        frags.append((bar_style, self._build_context_bar(percent, 15)))
+        frags.append(("class:status-bar-dim", " "))
+        frags.append((bar_style, percent_label))
+        # Reasoning effort badge
+        if reasoning_label:
+            frags.append(("class:status-bar-dim", " │ "))
+            frags.append(("class:status-bar-reasoning", reasoning_label))
+        # Think display badge
+        if show_reasoning and not reasoning_label:
+            frags.append(("class:status-bar-dim", " │ "))
+            frags.append(("class:status-bar-reasoning", "think"))
+        frags.append(("class:status-bar-dim", " │ "))
+        frags.append(("class:status-bar-dim", duration_label))
+        if yolo_active:
+            frags.append(("class:status-bar-dim", " │ "))
+            frags.append(("class:status-bar-yolo", "⚠ YOLO"))
+        frags.append(("class:status-bar", " "))
+
+        total_width = sum(self._status_bar_display_width(text) for _, text in frags)
+        if total_width > width:
+            plain_text = "".join(text for _, text in frags)
+            trimmed = self._trim_status_bar_text(plain_text, width)
+            return [("class:status-bar", trimmed)]
+        return frags
+
+    def _build_bottom_bar_fragments(self, snapshot: dict, width: int) -> list:
+        """Build the bottom status bar line — operational details below the prompt input."""
+        duration_label = snapshot["duration"]
+        yolo_active = self._is_session_yolo_active()
+        cost_usd = snapshot.get("session_estimated_cost_usd", 0.0)
+        turn_count = snapshot.get("session_turn_count", 0)
+        git_branch = snapshot.get("git_branch", "")
+        cwd = snapshot.get("cwd", "")
+        reasoning_label = snapshot.get("reasoning_effort", "")
+        show_reasoning = snapshot.get("show_reasoning", False)
+
+        # Ultra-narrow or very narrow: < 64 cols — bottom line is minimal
+        if width < 64:
+            # Show reasoning/think badge if active, plus duration
+            frags = []
+            reasoning_badge = ""
+            if reasoning_label:
+                reasoning_badge = reasoning_label
+            elif show_reasoning:
+                reasoning_badge = "think"
+            if reasoning_badge:
+                frags.append(("class:status-bar-reasoning", f" {reasoning_badge} "))
+            if yolo_active:
+                frags.append(("class:status-bar-yolo", " ⚠ YOLO"))
+            frags.append(("class:status-bar-dim", " "))
+            frags.append(("class:status-bar-dim", duration_label))
+            frags.append(("class:status-bar", " "))
+            total_width = sum(self._status_bar_display_width(text) for _, text in frags)
+            if total_width > width:
+                plain_text = "".join(text for _, text in frags)
+                trimmed = self._trim_status_bar_text(plain_text, width)
+                return [("class:status-bar", trimmed)]
+            return frags if reasoning_badge or yolo_active else [("class:status-bar", " ")]
+
+        # Narrow: 64-79 cols — compressions, bg, subagents, cost, turns, duration, YOLO
+        if width < 80:
+            frags = [("class:status-bar", " ")]
+            compressions = snapshot.get("compressions", 0)
+            if compressions:
+                frags.append(("class:status-bar-dim", " │ "))
+                frags.append((self._compression_count_style(compressions), f"🗜️ {compressions}"))
+            bg_count = snapshot.get("active_background_tasks", 0)
+            if bg_count:
+                frags.append(("class:status-bar-dim", " │ "))
+                frags.append(("class:status-bar-strong", f"▶ {bg_count}"))
+            bg_proc_count = snapshot.get("active_background_processes", 0)
+            if bg_proc_count:
+                frags.append(("class:status-bar-dim", " │ "))
+                frags.append(("class:status-bar-strong", f"⚙ {bg_proc_count}"))
+            sub_count = snapshot.get("active_subagents", 0)
+            if sub_count:
+                frags.append(("class:status-bar-dim", " │ "))
+                frags.append(("class:status-bar-strong", f"✦ {sub_count}"))
+            bg_subagent_count = snapshot.get("active_background_subagents", 0)
+            if bg_subagent_count:
+                frags.append(("class:status-bar-dim", " │ "))
+                frags.append(("class:status-bar-strong", f"⛓ {bg_subagent_count}"))
+            if cost_usd > 0:
+                frags.append(("class:status-bar-dim", " │ "))
+                frags.append(("class:status-bar-strong", f"${cost_usd:.4f}"))
+            if turn_count:
+                frags.append(("class:status-bar-dim", " │ "))
+                frags.append(("class:status-bar-dim", f"#{turn_count}"))
+            if yolo_active:
+                frags.append(("class:status-bar-dim", " │ "))
+                frags.append(("class:status-bar-yolo", "⚠ YOLO"))
+            frags.append(("class:status-bar-dim", " │ "))
+            frags.append(("class:status-bar-dim", duration_label))
+            frags.append(("class:status-bar", " "))
+            total_width = sum(self._status_bar_display_width(text) for _, text in frags)
+            if total_width > width:
+                plain_text = "".join(text for _, text in frags)
+                trimmed = self._trim_status_bar_text(plain_text, width)
+                return [("class:status-bar", trimmed)]
+            return frags
+
+        # Medium: 80-99 cols — add git branch, elapsed, idle
+        if width < 100:
+            frags = [("class:status-bar", " ")]
+            compressions = snapshot.get("compressions", 0)
+            if compressions:
+                frags.append(("class:status-bar-dim", " │ "))
+                frags.append((self._compression_count_style(compressions), f"🗜️ {compressions}"))
+            bg_count = snapshot.get("active_background_tasks", 0)
+            if bg_count:
+                frags.append(("class:status-bar-dim", " │ "))
+                frags.append(("class:status-bar-strong", f"▶ {bg_count}"))
+            bg_proc_count = snapshot.get("active_background_processes", 0)
+            if bg_proc_count:
+                frags.append(("class:status-bar-dim", " │ "))
+                frags.append(("class:status-bar-strong", f"⚙ {bg_proc_count}"))
+            sub_count = snapshot.get("active_subagents", 0)
+            if sub_count:
+                frags.append(("class:status-bar-dim", " │ "))
+                frags.append(("class:status-bar-strong", f"✦ {sub_count}"))
+            bg_subagent_count = snapshot.get("active_background_subagents", 0)
+            if bg_subagent_count:
+                frags.append(("class:status-bar-dim", " │ "))
+                frags.append(("class:status-bar-strong", f"⛓ {bg_subagent_count}"))
+            if git_branch:
+                frags.append(("class:status-bar-dim", " │ "))
+                frags.append(("class:status-bar-strong", f"git:{git_branch}"))
+            prompt_elapsed = snapshot.get("prompt_elapsed")
+            if prompt_elapsed:
+                frags.append(("class:status-bar-dim", " │ "))
+                frags.append(("class:status-bar-dim", prompt_elapsed))
+            idle_since = snapshot.get("idle_since")
+            if idle_since:
+                frags.append(("class:status-bar-dim", " │ "))
+                frags.append(("class:status-bar-dim", idle_since))
+            if yolo_active:
+                frags.append(("class:status-bar-dim", " │ "))
+                frags.append(("class:status-bar-yolo", "⚠ YOLO"))
+            frags.append(("class:status-bar-dim", " │ "))
+            frags.append(("class:status-bar-dim", duration_label))
+            frags.append(("class:status-bar", " "))
+            total_width = sum(self._status_bar_display_width(text) for _, text in frags)
+            if total_width > width:
+                plain_text = "".join(text for _, text in frags)
+                trimmed = self._trim_status_bar_text(plain_text, width)
+                return [("class:status-bar", trimmed)]
+            return frags
+
+        # Wide: 100+ cols — full layout with cost, turns, git branch, cwd, elapsed, idle, YOLO
+        frags = [("class:status-bar", " ")]
+        compressions = snapshot.get("compressions", 0)
+        if compressions:
+            frags.append(("class:status-bar-dim", " │ "))
+            frags.append((self._compression_count_style(compressions), f"🗜️ {compressions}"))
+        bg_count = snapshot.get("active_background_tasks", 0)
+        if bg_count:
+            frags.append(("class:status-bar-dim", " │ "))
+            frags.append(("class:status-bar-strong", f"▶ {bg_count}"))
+        bg_proc_count = snapshot.get("active_background_processes", 0)
+        if bg_proc_count:
+            frags.append(("class:status-bar-dim", " │ "))
+            frags.append(("class:status-bar-strong", f"⚙ {bg_proc_count}"))
+        sub_count = snapshot.get("active_subagents", 0)
+        if sub_count:
+            frags.append(("class:status-bar-dim", " │ "))
+            frags.append(("class:status-bar-strong", f"✦ {sub_count}"))
+        bg_subagent_count = snapshot.get("active_background_subagents", 0)
+        if bg_subagent_count:
+            frags.append(("class:status-bar-dim", " │ "))
+            frags.append(("class:status-bar-strong", f"⛓ {bg_subagent_count}"))
+        if cost_usd > 0:
+            frags.append(("class:status-bar-dim", " │ "))
+            frags.append(("class:status-bar-strong", f"${cost_usd:.4f}"))
+        if turn_count:
+            frags.append(("class:status-bar-dim", " │ "))
+            frags.append(("class:status-bar-dim", f"#{turn_count}"))
+        if git_branch:
+            frags.append(("class:status-bar-dim", " │ "))
+            frags.append(("class:status-bar-strong", f"git:{git_branch}"))
+        if cwd:
+            frags.append(("class:status-bar-dim", " │ "))
+            frags.append(("class:status-bar-strong", f"📁 {cwd}"))
+        prompt_elapsed = snapshot.get("prompt_elapsed")
+        if prompt_elapsed:
+            frags.append(("class:status-bar-dim", " │ "))
+            frags.append(("class:status-bar-dim", prompt_elapsed))
+        idle_since = snapshot.get("idle_since")
+        if idle_since:
+            frags.append(("class:status-bar-dim", " │ "))
+            frags.append(("class:status-bar-dim", idle_since))
+        if yolo_active:
+            frags.append(("class:status-bar-dim", " │ "))
+            frags.append(("class:status-bar-yolo", "⚠ YOLO"))
+        frags.append(("class:status-bar-dim", " │ "))
+        frags.append(("class:status-bar-dim", duration_label))
+        frags.append(("class:status-bar", " "))
+
+        total_width = sum(self._status_bar_display_width(text) for _, text in frags)
+        if total_width > width:
+            plain_text = "".join(text for _, text in frags)
+            trimmed = self._trim_status_bar_text(plain_text, width)
+            return [("class:status-bar", trimmed)]
+        return frags
 
     @staticmethod
     def _fmt_stash_age(stashed_at: float) -> str:
@@ -7179,7 +7600,8 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         """Return the active reasoning display callback for the current mode."""
         if self.show_reasoning and self.streaming_enabled:
             return self._stream_reasoning_delta
-        if self.verbose and not self.show_reasoning:
+        if self.show_reasoning:
+            # Non-streaming path: buffer reasoning for the post-turn last_reasoning box
             return self._on_reasoning
         return None
 
@@ -7270,7 +7692,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
     def _format_submitted_user_message_preview(self, user_input: str) -> str:
         """Format the submitted user-message scrollback preview."""
         ts_suffix = (
-            f" [dim]{datetime.now().strftime(getattr(self, 'timestamp_format', '%H:%M'))}[/]"
+            f" [dim]{datetime.now().strftime('%H:%M')}[/]"
             if getattr(self, "show_timestamps", False) else ""
         )
         lines = user_input.split("\n")
@@ -7436,14 +7858,10 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             self._stream_last_was_newline = True  # start of stream = boundary
 
         if not getattr(self, "_in_reasoning_block", False):
-            # Case-insensitive matching against a lowercased view so
-            # mixed-case tag variants (<Think>, <THINKING>, …) are caught.
-            prefilt_lower = self._stream_prefilt.lower()
             for tag in _OPEN_TAGS:
-                tag_lower = tag.lower()
                 search_start = 0
                 while True:
-                    idx = prefilt_lower.find(tag_lower, search_start)
+                    idx = self._stream_prefilt.find(tag, search_start)
                     if idx == -1:
                         break
                     # Check if this is a block boundary position
@@ -7483,12 +7901,11 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
 
             # Could also be a partial open tag at the end — hold it back
             if not getattr(self, "_in_reasoning_block", False):
-                # Check for partial tag match at the end (case-insensitive)
+                # Check for partial tag match at the end
                 safe = self._stream_prefilt
                 for tag in _OPEN_TAGS:
-                    tag_lower = tag.lower()
                     for i in range(1, len(tag)):
-                        if prefilt_lower.endswith(tag_lower[:i]):
+                        if self._stream_prefilt.endswith(tag[:i]):
                             safe = self._stream_prefilt[:-i]
                             break
                 if safe:
@@ -7501,17 +7918,13 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         # Keep accumulating _stream_prefilt because close tags can arrive
         # split across multiple tokens (e.g. "</REASONING_SCRATCH" + "PAD>...").
         if getattr(self, "_in_reasoning_block", False):
-            prefilt_lower = self._stream_prefilt.lower()
             for tag in _CLOSE_TAGS:
-                idx = prefilt_lower.find(tag.lower())
+                idx = self._stream_prefilt.find(tag)
                 if idx != -1:
                     self._in_reasoning_block = False
-                    # When show_reasoning is on, route inner content to
-                    # the reasoning display box instead of discarding.
-                    if self.show_reasoning:
-                        inner = self._stream_prefilt[:idx]
-                        if inner:
-                            self._stream_reasoning_delta(inner)
+                    inner = self._stream_prefilt[:idx]
+                    if inner:
+                        self._stream_reasoning_delta(inner)
                     after = self._stream_prefilt[idx + len(tag):]
                     self._stream_prefilt = ""
                     # Process remaining text after close tag through full
@@ -7524,10 +7937,9 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             # could be a partial close tag prefix.
             max_tag_len = max(len(t) for t in _CLOSE_TAGS)
             if len(self._stream_prefilt) > max_tag_len:
-                if self.show_reasoning:
-                    # Route the safe prefix to reasoning display
-                    safe_reasoning = self._stream_prefilt[:-max_tag_len]
-                    self._stream_reasoning_delta(safe_reasoning)
+                # Route the safe prefix to reasoning display
+                safe_reasoning = self._stream_prefilt[:-max_tag_len]
+                self._stream_reasoning_delta(safe_reasoning)
                 self._stream_prefilt = self._stream_prefilt[-max_tag_len:]
             return
 
@@ -7539,7 +7951,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         # When show_reasoning is on and reasoning is still rendering,
         # defer content until the reasoning box closes.  This ensures the
         # reasoning block always appears BEFORE the response in the terminal.
-        if self.show_reasoning and getattr(self, "_reasoning_box_opened", False):
+        if getattr(self, "_reasoning_box_opened", False):
             self._deferred_content = getattr(self, "_deferred_content", "") + text
             return
 
@@ -7571,7 +7983,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             except (ValueError, IndexError):
                 self._stream_text_ansi = ""
             if self.show_timestamps:
-                label = f"{label} {datetime.now().strftime(getattr(self, 'timestamp_format', '%H:%M'))}"
+                label = f"{label} {datetime.now().strftime('%H:%M')}"
             w = self._scrollback_box_width()
             fill = w - 2 - HermesCLI._status_bar_display_width(label)
             _cprint(f"\n{_ACCENT}╭─{label}{'─' * max(fill - 1, 0)}╮{_RST}")
@@ -7743,9 +8155,22 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         return "Processing command..."
 
     def _command_spinner_frame(self) -> str:
-        """Return the current spinner frame for slow slash commands."""
-        frame_idx = int(time.monotonic() * 10) % len(_COMMAND_SPINNER_FRAMES)
-        return _COMMAND_SPINNER_FRAMES[frame_idx]
+        """Return the current spinner frame for slow slash commands.
+
+        Uses skin-themed frames when available, falling back to the classic
+        Braille dot spinner for skins without a themed frame set.
+        """
+        frames = _COMMAND_SPINNER_FRAMES
+        try:
+            from hermes_cli.skin_engine import get_active_skin_name, get_active_skin
+            skin_name = get_active_skin_name()
+            themed = _SKIN_SPINNER_FRAMES.get(skin_name)
+            if themed:
+                frames = themed
+        except Exception:
+            pass
+        frame_idx = int(time.monotonic() * 10) % len(frames)
+        return frames[frame_idx]
 
     @contextmanager
     def _busy_command(self, status: str, *, blocks_input: bool = True):
@@ -9084,30 +9509,30 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
 
         from hermes_cli.main import _relative_time
 
-        _cli_visible_print()
+        _cprint("")
         if reason == "history":
-            _cli_visible_print("(._.) No messages in the current chat yet — here are recent sessions you can resume:")
+            _cprint("(._.) No messages in the current chat yet — here are recent sessions you can resume:")
         else:
-            _cli_visible_print("  Recent sessions:")
-        _cli_visible_print()
-        _cli_visible_print(f"  {'#':<3} {'Title':<32} {'Preview':<40} {'Last Active':<13} {'ID'}")
-        _cli_visible_print(f"  {'─' * 3} {'─' * 32} {'─' * 40} {'─' * 13} {'─' * 24}")
+            _cprint("  Recent sessions:")
+        _cprint("")
+        _cprint(f"  {'#':<3} {'Title':<32} {'Preview':<40} {'Last Active':<13} {'ID'}")
+        _cprint(f"  {'─' * 3} {'─' * 32} {'─' * 40} {'─' * 13} {'─' * 24}")
         for idx, session in enumerate(sessions, start=1):
             title = session.get("title") or "—"
             preview = (session.get("preview") or "")[:38]
             last_active = _relative_time(session.get("last_active"))
-            _cli_visible_print(f"  {idx:<3} {title:<32} {preview:<40} {last_active:<13} {session['id']}")
-        _cli_visible_print()
-        _cli_visible_print("  Use /resume <number>, /resume <session id>, or /resume <session title> to continue.")
-        _cli_visible_print("  Example: /resume 2")
-        _cli_visible_print()
+            _cprint(f"  {idx:<3} {title:<32} {preview:<40} {last_active:<13} {session['id']}")
+        _cprint("")
+        _cprint("  Use /resume <number>, /resume <session id>, or /resume <session title> to continue.")
+        _cprint("  Example: /resume 2")
+        _cprint("")
         return True
 
     def show_history(self):
         """Display conversation history."""
         if not self.conversation_history:
             if not self._show_recent_sessions(reason="history"):
-                _cli_visible_print("(._.) No conversation history yet.")
+                print("(._.) No conversation history yet.")
             return
 
         preview_limit = 400
@@ -9126,7 +9551,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                 return ""
             try:
                 from datetime import datetime
-                return f"  [{datetime.fromtimestamp(float(ts)).strftime(getattr(self, 'timestamp_format', '%H:%M'))}]"
+                return f"  [{datetime.fromtimestamp(float(ts)).strftime('%H:%M')}]"
             except (ValueError, OSError, TypeError):
                 return ""
 
@@ -9136,14 +9561,14 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                 return
 
             noun = "message" if hidden_tool_messages == 1 else "messages"
-            _cli_visible_print("\n  [Tools]")
-            _cli_visible_print(f"    ({hidden_tool_messages} tool {noun} hidden)")
+            print("\n  [Tools]")
+            print(f"    ({hidden_tool_messages} tool {noun} hidden)")
             hidden_tool_messages = 0
 
-        _cli_visible_print()
-        _cli_visible_print("+" + "-" * 50 + "+")
-        _cli_visible_print("|" + " " * 12 + "(^_^) Conversation History" + " " * 11 + "|")
-        _cli_visible_print("+" + "-" * 50 + "+")
+        print()
+        print("+" + "-" * 50 + "+")
+        print("|" + " " * 12 + "(^_^) Conversation History" + " " * 11 + "|")
+        print("+" + "-" * 50 + "+")
 
         for msg in self.conversation_history:
             role = msg.get("role", "unknown")
@@ -9162,13 +9587,13 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             content_text = "" if content is None else str(content)
 
             if role == "user":
-                _cli_visible_print(f"\n  [You #{visible_index}]{_ts_suffix(msg)}")
-                _cli_visible_print(
+                print(f"\n  [You #{visible_index}]{_ts_suffix(msg)}")
+                print(
                     f"    {content_text[:preview_limit]}{'...' if len(content_text) > preview_limit else ''}"
                 )
                 continue
 
-            _cli_visible_print(f"\n  [Hermes #{visible_index}]{_ts_suffix(msg)}")
+            print(f"\n  [Hermes #{visible_index}]{_ts_suffix(msg)}")
             tool_calls = msg.get("tool_calls") or []
             if content_text:
                 preview = content_text[:preview_limit]
@@ -9181,10 +9606,10 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             else:
                 preview = "(no text response)"
                 suffix = ""
-            _cli_visible_print(f"    {preview}{suffix}")
+            print(f"    {preview}{suffix}")
 
         flush_tool_summary()
-        _cli_visible_print()
+        print()
     
     def _notify_session_boundary(self, event_type: str) -> None:
         """Fire a session-boundary plugin hook (on_session_finalize or on_session_reset).
@@ -10433,7 +10858,6 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                 api_key=result.api_key or self.api_key or "",
                 model_info=mi,
                 config_context_length=getattr(self.agent, "_config_context_length", None) if self.agent else None,
-                custom_providers=getattr(self.agent, "_custom_providers", None) if self.agent else None,
             )
             if ctx:
                 _cprint(f"    Context: {ctx:,} tokens")
@@ -10817,7 +11241,6 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             api_key=result.api_key or self.api_key or "",
             model_info=mi,
             config_context_length=getattr(self.agent, "_config_context_length", None) if self.agent else None,
-            custom_providers=getattr(self.agent, "_custom_providers", None) if self.agent else None,
         )
         if ctx:
             _cprint(f"    Context: {ctx:,} tokens")
@@ -11447,7 +11870,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         elif canonical == "copy":
             self._handle_copy_command(cmd_original)
         elif canonical == "debug":
-            self._handle_debug_command(cmd_original)
+            self._handle_debug_command()
         elif canonical == "update":
             if self._handle_update_command():
                 return False
@@ -11551,8 +11974,6 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             self._handle_stop_command()
         elif canonical == "agents":
             self._handle_agents_command()
-        elif canonical == "journey":
-            self._handle_journey_command(cmd_original)
         elif canonical == "background":
             self._handle_background_command(cmd_original)
         elif canonical == "queue":
@@ -11677,8 +12098,6 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                             )
                             output = result.stdout.strip() or result.stderr.strip()
                             if output:
-                                from agent.redact import redact_sensitive_text
-                                output = redact_sensitive_text(output)
                                 self._console_print(_rich_text_from_ansi(output))
                             else:
                                 self._console_print("[dim]Command returned no output[/]")
@@ -11742,39 +12161,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                     )
             # Check for skill slash commands (/gif-search, /axolotl, etc.)
             elif base_cmd in skill_commands:
-                rest = cmd_original[len(base_cmd):].strip()
-                # Stacked slash-skill invocations: `/skill-a /skill-b do XYZ`
-                # loads every leading skill (up to 5), not just the first.
-                # Inspired by Claude Code v2.1.199.
-                from agent.skill_commands import (
-                    build_stacked_skill_invocation_message,
-                    split_stacked_skill_commands,
-                )
-                extra_keys, user_instruction = split_stacked_skill_commands(rest)
-                if extra_keys:
-                    stacked_result = build_stacked_skill_invocation_message(
-                        [base_cmd, *extra_keys],
-                        user_instruction,
-                        task_id=self.session_id,
-                    )
-                    if stacked_result:
-                        msg, loaded_names, missing = stacked_result
-                        print(
-                            f"\n⚡ Loading {len(loaded_names)} stacked skills: "
-                            f"{', '.join(loaded_names)}"
-                        )
-                        if missing:
-                            ChatConsole().print(
-                                f"[yellow]Skipped missing skills: {', '.join(missing)}[/]"
-                            )
-                        if hasattr(self, '_pending_input'):
-                            self._pending_input.put(msg)
-                    else:
-                        ChatConsole().print(
-                            f"[bold red]Failed to load stacked skills for {base_cmd}[/]"
-                        )
-                    return True
-                user_instruction = rest
+                user_instruction = cmd_original[len(base_cmd):].strip()
                 msg = build_skill_invocation_message(
                     base_cmd, user_instruction, task_id=self.session_id
                 )
@@ -12526,11 +12913,9 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         # /compress handler has never gated on the flag.
 
         from hermes_cli.partial_compress import (
-            extract_compress_flags,
             parse_partial_compress_args,
             rejoin_compressed_head_and_tail,
             split_history_for_partial_compress,
-            summarize_compress_preview,
         )
         from agent.conversation_compression import (
             finalize_context_engine_compression_notification,
@@ -12543,41 +12928,8 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             if len(_parts) > 1:
                 raw_args = _parts[1].strip()
 
-        # Strip --preview/--dry-run/--aggressive before positional parsing
-        # so the flags coexist with 'here [N]' / focus-topic forms.
-        raw_args, preview, aggressive = extract_compress_flags(raw_args)
         partial, keep_last, focus_topic = parse_partial_compress_args(raw_args)
         focus_topic = focus_topic or ""
-
-        if aggressive:
-            # LLM-free hard truncation is not supported: it would need its
-            # own transcript-persistence path outside the guarded
-            # _compress_context rotation machinery. Surface that instead of
-            # silently mis-parsing the flag as a focus topic.
-            print("(._.) --aggressive is not supported; use '/compress here [N]' "
-                  "to keep only recent exchanges, or /undo to drop turns.")
-            if not preview:
-                return
-
-        if preview:
-            from agent.model_metadata import estimate_request_tokens_rough
-            _sys_prompt = getattr(self.agent, "_cached_system_prompt", "") or ""
-            _tools = getattr(self.agent, "tools", None) or None
-            approx_tokens = estimate_request_tokens_rough(
-                self.conversation_history,
-                system_prompt=_sys_prompt,
-                tools=_tools,
-            )
-            report = summarize_compress_preview(
-                self.conversation_history,
-                partial,
-                keep_last,
-                focus_topic or None,
-                approx_tokens,
-            )
-            for line in report["lines"]:
-                print(f"🗜️  {line}")
-            return
 
         original_count = len(self.conversation_history)
         with self._busy_command("Compressing context...", blocks_input=False):
@@ -12863,7 +13215,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         total = agent.session_total_tokens
 
         compressor = agent.context_compressor
-        last_prompt = compressor.last_prompt_tokens if compressor.last_prompt_tokens > 0 else 0
+        last_prompt = compressor.last_prompt_tokens
         ctx_len = compressor.context_length
         pct = min(100, (last_prompt / ctx_len * 100)) if ctx_len else 0
         compressions = compressor.compression_count
@@ -12929,6 +13281,730 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             # into stream-retry events, credential rotations, etc.
             # Console quietness is enforced by hermes_logging not
             # installing a console StreamHandler in non-verbose mode.
+
+    def _print_nous_credits_block(self) -> bool:
+        """Print the Nous credits magnitudes + monthly-grant gauge when a Nous account
+        is logged in. Returns True if it printed anything.
+
+        Delegates to the shared ``agent.account_usage.nous_credits_lines`` helper —
+        the single source for the /usage credits block across CLI, gateway, and TUI.
+        It's agent-independent (a portal fetch gated on "a Nous account is logged in",
+        NOT the inference-provider string), so /usage shows the block even in the TUI
+        slash-worker subprocess that resumes WITHOUT a live agent. Fail-open and
+        wall-clock-bounded inside the helper; also honors HERMES_DEV_CREDITS_FIXTURE
+        for offline testing — same behavior as every other surface.
+        """
+        from agent.account_usage import nous_credits_lines
+
+        lines = nous_credits_lines()
+        if not lines:
+            return False
+        print()
+        for line in lines:
+            print(f"  {line}")
+        return True
+
+    def _show_credits(self):
+        """`/credits` — focused Nous credit balance + top-up handoff.
+
+        Interactive CLI: balance block + identity line + a 3-button panel
+        (Open top-up / Copy link / Cancel). Non-interactive contexts — the TUI
+        slash-worker subprocess and any place without a live prompt_toolkit app
+        (``self._app is None``) — render a text variant (balance + tappable
+        top-up URL), because the modal would try to read the RPC stdin and crash
+        the worker. The terminal never confirms or polls payment (billing phase
+        2a). Fail-open: a portal hiccup or logged-out account degrades to a clear
+        message, never a crash.
+        """
+        from agent.account_usage import build_credits_view
+
+        view = build_credits_view()
+
+        if not view.logged_in:
+            print()
+            _cprint(f"  💳 {_d('Not logged into Nous Portal.')}")
+            print("  Run `hermes portal` to log in, then /credits.")
+            return
+
+        print()
+        print("  💳 Nous credits")
+        print(f"  {'─' * 41}")
+        for line in view.balance_lines:
+            # Drop the helper's own "📈 Nous credits" header — we print our own.
+            if line.lstrip().startswith("📈"):
+                continue
+            print(f"  {line}")
+        print(f"  {'─' * 41}")
+        if view.identity_line:
+            print(f"  {view.identity_line}")
+
+        if not view.topup_url:
+            return
+
+        # Non-interactive (TUI slash-worker, piped, no live app): the
+        # prompt_toolkit modal can't run here — it would read the worker's
+        # JSON-RPC stdin and crash the command. Render the text variant: the
+        # tappable URL IS the affordance, same as the messaging surfaces.
+        if not getattr(self, "_app", None):
+            print()
+            print(f"  Top up: {view.topup_url}")
+            print("  Complete your top-up in the browser — credits will appear in /credits shortly.")
+            return
+
+        choices = [
+            ("open", "Open top-up in browser", "launch the portal billing page"),
+            ("copy", "Copy link", "copy the top-up URL to your clipboard"),
+            ("cancel", "Cancel", "do nothing"),
+        ]
+        raw = self._prompt_text_input_modal(
+            title="💳 Add credits?",
+            detail=f"Top-up page:\n{view.topup_url}",
+            choices=choices,
+        )
+        choice = self._normalize_slash_confirm_choice(raw, choices)
+
+        if choice == "open":
+            opened = False
+            try:
+                import webbrowser
+
+                opened = webbrowser.open(view.topup_url)
+            except Exception:
+                opened = False
+            if not opened:
+                print(f"  Open this URL to top up: {view.topup_url}")
+            print()
+            print("  Complete your top-up in the browser — credits will appear in /credits shortly.")
+        elif choice == "copy":
+            try:
+                self._write_osc52_clipboard(view.topup_url)
+                print(f"  📋 Copied: {view.topup_url}")
+            except Exception:
+                print(f"  Top-up URL: {view.topup_url}")
+        else:
+            print("  🟡 Cancelled. No credits added.")
+
+    # ------------------------------------------------------------------
+    # /billing — Phase 2b terminal billing (CLI surface, all 5 screens)
+    # ------------------------------------------------------------------
+
+    def _show_billing(self, command: str = "/billing"):
+        """`/billing` — terminal billing for Nous (one interactive modal).
+
+        ZERO sub-commands: any argument is ignored. Bare ``/billing`` always
+        opens the Overview (Screen 1), whose numbered menu is the *only* way to
+        reach the Buy / Auto-reload / Monthly-limit sub-screens. (Per the unified
+        UX spec §0.4 — ``/billing buy`` etc. are gone; we don't error on a stray
+        arg, we just open the menu.)
+
+        Interactive CLI uses the prompt_toolkit modal; non-interactive contexts
+        (TUI slash-worker / no live app) render text + the portal deep-link, never
+        prompting (the URL is the affordance), same discipline as ``_show_credits``.
+        All money is Decimal end-to-end; the terminal never collects card details.
+        """
+        from agent.billing_view import build_billing_state
+
+        state = build_billing_state()
+        if not state.logged_in:
+            print()
+            if state.error:
+                _msg = f"Couldn't load billing: {state.error}"
+                _cprint(f"  💳 {_d(_msg)}")
+            else:
+                _cprint(f"  💳 {_d('Not logged into Nous Portal.')}")
+                print("  Run `hermes portal` to log in, then /billing.")
+            return
+
+        # Any sub-arg is intentionally ignored — always open the menu.
+        self._billing_overview(state)
+
+    def _billing_portal_hint(self, state, *, reason: str = "") -> None:
+        """Print a portal deep-link line (the funnel for portal-only actions)."""
+        url = getattr(state, "portal_url", None)
+        if not url:
+            return
+        if reason:
+            print(f"  {reason}")
+        print(f"  Manage on portal: {url}")
+
+    def _billing_overview(self, state):
+        """Screen 1 — overview: balance, spend bar, role-gated action menu."""
+        from agent.billing_view import format_money
+
+        print()
+        _cprint(f"  💳 {_b('Usage credits')}")
+        print(f"  {'─' * 41}")
+
+        cap = state.monthly_cap
+        if cap is not None and cap.limit_usd is not None:
+            spent = format_money(cap.spent_this_month_usd)
+            limit = format_money(cap.limit_usd)
+            ceiling = " (default ceiling)" if cap.is_default_ceiling else ""
+            bar, pct = self._billing_spend_bar(
+                cap.spent_this_month_usd, cap.limit_usd
+            )
+            print(f"  {spent} of {limit} used{ceiling}   {bar} {pct}%")
+
+        print(f"  Balance: {format_money(state.balance_usd)}")
+
+        ar = state.auto_reload
+        if ar is not None:
+            if ar.enabled:
+                print(
+                    f"  Auto-reload: on — below {format_money(ar.threshold_usd)} "
+                    f"→ reload to {format_money(ar.reload_to_usd)}"
+                )
+            else:
+                print("  Auto-reload: off")
+
+        if state.org_name:
+            role = (state.role or "").title()
+            _org_line = f"Org: {state.org_name}{f' · {role}' if role else ''}"
+            _cprint(f"  {_d(_org_line)}")
+        print(f"  {'─' * 41}")
+
+        # Action gating: admin + kill-switch for charge/auto-reload; everyone gets portal.
+        if not state.is_admin:
+            _cprint(f"  {_d('Billing actions require an org admin/owner.')}")
+            self._billing_portal_hint(state)
+            return
+        if not state.cli_billing_enabled:
+            _cprint(f"  {_d('Terminal billing is turned off for this org.')}")
+            self._billing_portal_hint(state, reason="Enable it on the portal to buy credits here.")
+            return
+
+        # Optimistic funnel: no card on file → a charge will 403 no_payment_method.
+        # Surface that up front (with the portal link) but DON'T hide Buy — /state.card
+        # can't fully prove CLI-chargeability, so we advise rather than gate.
+        if state.card is None:
+            _cprint(
+                f"  {_d('No saved card for terminal charges yet — set one up on the portal first.')}"
+            )
+            self._billing_portal_hint(state)
+
+        # Non-interactive (slash-worker / no live app): no modal, no sub-command
+        # advertising — just the portal funnel (the URL is the affordance).
+        if not getattr(self, "_app", None):
+            self._billing_portal_hint(state)
+            return
+
+        choices = [
+            ("buy", "Buy credits", "purchase a one-time credit top-up"),
+            ("auto", "Adjust auto-reload", "configure automatic top-ups"),
+            ("limit", "Adjust monthly limit", "show the monthly spend cap (read-only)"),
+            ("portal", "Manage on portal", "open the billing page in your browser"),
+            ("cancel", "Cancel", "do nothing"),
+        ]
+        # The overview summary is already printed above; the modal only needs to
+        # present the action menu — repeating the title/balance reads as a dupe.
+        raw = self._prompt_text_input_modal(
+            title="💳 Choose an action", detail="",
+            choices=choices,
+        )
+        choice = self._normalize_slash_confirm_choice(raw, choices)
+        if choice == "buy":
+            self._billing_buy_flow(state)
+        elif choice == "auto":
+            self._billing_auto_reload_flow(state)
+        elif choice == "limit":
+            self._billing_limit_screen(state)
+        elif choice == "portal":
+            self._billing_open_portal(state)
+        else:
+            print("  🟡 Cancelled.")
+
+    def _billing_spend_bar(self, spent, limit, *, cells: int = 10):
+        """Render a 10-cell `█`/`░` spend bar + integer percent from spent/limit.
+
+        Returns ``(bar, pct)`` where ``bar`` is like ``[████░░░░░░]`` and ``pct``
+        is the spent/limit percentage clamped to 0..100. Box-drawing glyphs are
+        not SGR codes, so this is leak-safe even without ``_b()``/``_d()``.
+        """
+        from decimal import Decimal
+
+        try:
+            s = Decimal(str(spent)) if spent is not None else Decimal("0")
+            l = Decimal(str(limit)) if limit is not None else Decimal("0")
+        except Exception:
+            s, l = Decimal("0"), Decimal("0")
+        if l <= 0:
+            pct = 0
+        else:
+            pct = int((s / l) * 100)
+        pct = max(0, min(100, pct))
+        filled = int(round(pct / 100 * cells))
+        filled = max(0, min(cells, filled))
+        bar = ("█" * filled) + ("░" * (cells - filled))
+        return bar, pct
+
+    def _billing_open_portal(self, state):
+        url = getattr(state, "portal_url", None)
+        if not url:
+            print("  No portal URL available.")
+            return
+        opened = False
+        try:
+            import webbrowser
+
+            opened = webbrowser.open(url)
+        except Exception:
+            opened = False
+        if not opened:
+            print(f"  Open this URL: {url}")
+        print("  Complete billing changes in the browser.")
+
+    def _billing_require_admin(self, state) -> bool:
+        """Guard charge/auto-reload entry points; print + return False if blocked."""
+        if not state.is_admin:
+            print()
+            _cprint(f"  💳 {_d('Billing actions require an org admin/owner.')}")
+            self._billing_portal_hint(state)
+            return False
+        if not state.cli_billing_enabled:
+            print()
+            _cprint(f"  💳 {_d('Terminal billing is turned off for this org.')}")
+            self._billing_portal_hint(state, reason="Enable it on the portal first.")
+            return False
+        return True
+
+    def _billing_buy_flow(self, state):
+        """Screen 2 (preset select) → Screen 3 (confirm + charge + poll)."""
+        from agent.billing_view import format_money, validate_charge_amount
+
+        if not self._billing_require_admin(state):
+            return
+
+        # Screen 3 — preset selection.
+        if not getattr(self, "_app", None):
+            presets = ", ".join(format_money(p) for p in state.charge_presets)
+            print()
+            _cprint(f"  💳 {_b('Buy usage credits')}")
+            print(f"  Presets: {presets}")
+            print("  Run this in the interactive CLI to complete a purchase.")
+            self._billing_portal_hint(state)
+            return
+
+        preset_choices = []
+        for p in state.charge_presets:
+            preset_choices.append((str(p), format_money(p), "one-time credit purchase"))
+        preset_choices.append(("custom", "Custom amount…", "enter your own amount"))
+        preset_choices.append(("cancel", "Cancel", "do nothing"))
+
+        card = state.card
+        detail = f"Payment: {card.masked}" if card else "No saved card on file"
+        raw = self._prompt_text_input_modal(
+            title="💳 Buy usage credits", detail=detail, choices=preset_choices,
+        )
+        choice = self._normalize_slash_confirm_choice(raw, preset_choices)
+        if not choice or choice == "cancel":
+            print("  🟡 Cancelled. No credits added.")
+            return
+
+        from decimal import Decimal
+
+        if choice == "custom":
+            entered = self._prompt_text_input("  Amount (USD): ")
+            if entered is None:
+                # None = cancelled (e.g. slash-worker can't prompt off-thread).
+                print("  🟡 Cancelled. No credits added.")
+                return
+            v = validate_charge_amount(
+                entered or "", min_usd=state.min_usd, max_usd=state.max_usd
+            )
+            if not v.ok:
+                print(f"  🔴 {v.error}")
+                return
+            amount = v.amount
+        else:
+            try:
+                amount = Decimal(choice)
+            except Exception:
+                print("  🔴 Invalid selection.")
+                return
+
+        self._billing_confirm_and_charge(state, amount)
+
+    def _billing_confirm_and_charge(self, state, amount):
+        """Screen 3 — confirm total + consent, charge, then poll to settlement."""
+        from agent.billing_view import format_money, new_idempotency_key
+
+        card = state.card
+        print()
+        _cprint(f"  💳 {_b('Confirm purchase')}")
+        print(f"  {'─' * 41}")
+        print(f"  Total: {format_money(amount)}")
+        if card:
+            print(f"  Payment: {card.masked}")
+        print(f"  {'─' * 41}")
+        _consent = (
+            "By confirming, you allow Nous Research to charge your card."
+        )
+        _cprint(f"  {_d(_consent)}")
+
+        confirm_choices = [
+            ("pay", f"Pay {format_money(amount)} now", "submit the charge"),
+            ("cancel", "Go back", "do not charge"),
+        ]
+        if not getattr(self, "_app", None):
+            print("  Run in the interactive CLI to confirm a purchase.")
+            return
+        raw = self._prompt_text_input_modal(
+            title=f"💳 Pay {format_money(amount)}?",
+            detail=(card.masked if card else "no saved card"),
+            choices=confirm_choices,
+        )
+        choice = self._normalize_slash_confirm_choice(raw, confirm_choices)
+        if choice != "pay":
+            print("  🟡 Cancelled. No credits added.")
+            return
+
+        # Submit the charge with a fresh idempotency key (reused on retry).
+        from hermes_cli.nous_billing import (
+            BillingError,
+            BillingScopeRequired,
+            post_charge,
+        )
+
+        key = new_idempotency_key()
+        try:
+            result = post_charge(amount_usd=amount, idempotency_key=key)
+        except BillingScopeRequired:
+            self._billing_handle_scope_required(state)
+            return
+        except BillingError as exc:
+            self._billing_render_charge_error(state, exc)
+            return
+
+        charge_id = result.get("chargeId")
+        if not charge_id:
+            print("  🔴 No charge id returned; please check the portal.")
+            return
+        _cprint(f"  {_d('Charge submitted — confirming settlement…')}")
+        self._billing_poll_charge(state, charge_id, amount)
+
+    def _billing_poll_charge(self, state, charge_id, amount):
+        """Poll loop: 2s interval, 5-min cap, cancellable. settled = ledger truth."""
+        import time as _time
+
+        from agent.billing_view import format_money
+        from hermes_cli.nous_billing import (
+            BillingError,
+            BillingRateLimited,
+            get_charge_status,
+        )
+
+        deadline = _time.time() + 300  # 5-minute cap
+        interval = 2.0
+        while _time.time() < deadline:
+            try:
+                status = get_charge_status(charge_id)
+            except BillingRateLimited as exc:
+                # Retry-after, NOT a failure — back off and keep polling.
+                wait = exc.retry_after or 5
+                _time.sleep(min(wait, 30))
+                continue
+            except BillingError as exc:
+                print(f"  🔴 Could not check the charge: {exc}")
+                return
+
+            state_str = status.get("status")
+            if state_str == "settled":
+                amt = status.get("amountUsd")
+                from agent.billing_view import parse_money
+
+                shown = format_money(parse_money(amt)) if amt else format_money(amount)
+                print(f"  ✅ {shown} in credits added.")
+                return
+            if state_str == "failed":
+                self._billing_render_charge_failed(state, status.get("reason"))
+                return
+            # pending → wait and poll again
+            _time.sleep(interval)
+
+        # Past the cap with no terminal state = timeout (not an error).
+        print(f"  🟡 Still processing after 5 minutes — this is a timeout, not a "
+              f"failure. Check /billing or the portal shortly.")
+        self._billing_portal_hint(state)
+
+    def _billing_render_charge_failed(self, state, reason):
+        """Branch the poll `failed` reasons to the right copy + portal funnel."""
+        reason = (reason or "").strip()
+        if reason == "authentication_required":
+            print("  🔴 Your bank requires verification (3DS). Complete it on the "
+                  "portal to finish this purchase.")
+        elif reason == "payment_method_expired":
+            print("  🔴 Your card has expired. Update it on the portal.")
+        elif reason == "card_declined":
+            print("  🔴 Your card was declined. Try another card on the portal.")
+        else:
+            print(f"  🔴 The charge didn't go through ({reason or 'processing_error'}).")
+        self._billing_portal_hint(state)
+
+    def _billing_render_charge_error(self, state, exc):
+        """Render a typed BillingError at submit time (pre-poll)."""
+        from hermes_cli.nous_billing import BillingRateLimited
+
+        code = getattr(exc, "error", None)
+        portal_url = getattr(exc, "portal_url", None) or getattr(state, "portal_url", None)
+        if code == "no_payment_method":
+            print("  💳 No saved card for terminal charges yet. Set one up on the "
+                  "portal (one-time credit buys don't save a reusable card).")
+        elif code == "cli_billing_disabled":
+            print("  🔴 Terminal billing is turned off for this org — an admin must enable it on the portal.")
+        elif code == "monthly_cap_exceeded":
+            remaining = (getattr(exc, "payload", {}) or {}).get("remainingUsd")
+            if remaining is not None:
+                print(f"  🔴 Monthly spend cap reached — ${remaining} headroom left.")
+            else:
+                print("  🔴 Monthly spend cap reached.")
+        elif isinstance(exc, BillingRateLimited):
+            wait = getattr(exc, "retry_after", None)
+            mins = f" (try again in ~{max(1, round(wait / 60))} min)" if wait else ""
+            print(f"  🟡 Too many charges right now{mins}. This isn't a payment failure.")
+        else:
+            print(f"  🔴 {exc}")
+        if portal_url:
+            print(f"  Portal: {portal_url}")
+
+    def _billing_handle_scope_required(self, state):
+        """403 insufficient_scope → lazy step-up re-auth (plan D-A)."""
+        print()
+        print("  💳 Terminal billing needs an extra permission (billing:manage).")
+        _scope_msg = (
+            "An org admin/owner must tick \"Allow terminal billing\" during "
+            "login."
+        )
+        _cprint(f"  {_d(_scope_msg)}")
+        if not getattr(self, "_app", None):
+            print("  Run `hermes portal` and approve terminal billing, then retry.")
+            return
+        confirm_choices = [
+            ("yes", "Re-authorize now", "open the portal to grant billing access"),
+            ("no", "Not now", "cancel"),
+        ]
+        raw = self._prompt_text_input_modal(
+            title="💳 Grant terminal billing access?",
+            detail="Opens the portal device-authorization page.",
+            choices=confirm_choices,
+        )
+        choice = self._normalize_slash_confirm_choice(raw, confirm_choices)
+        if choice != "yes":
+            print("  🟡 Cancelled.")
+            return
+        try:
+            from hermes_cli.auth import step_up_nous_billing_scope
+
+            granted = step_up_nous_billing_scope(open_browser=True)
+        except Exception as exc:
+            print(f"  🔴 Re-authorization failed: {exc}")
+            return
+        if granted:
+            print("  ✅ Billing permission granted.")
+            # Step-up only grants the billing:manage TOKEN scope; the ORG
+            # kill-switch (cli_billing_enabled) is a separate gate. Re-fetch
+            # /state so we don't over-promise when a charge would still hit
+            # cli_billing_disabled.
+            from agent.billing_view import build_billing_state
+
+            fresh = build_billing_state()
+            if fresh.logged_in and fresh.cli_billing_enabled:
+                print("  Run /billing buy again to continue.")
+            else:
+                print("  🟡 Permission granted, but terminal billing is still turned "
+                      "off for this org. Enable it in the portal, then run /billing again.")
+                self._billing_portal_hint(fresh)
+        else:
+            print("  🟡 Terminal billing was not granted (an admin must tick the box).")
+
+    def _billing_auto_reload_flow(self, state):
+        """Screen 4 — auto-reload config: threshold + reload-to → PATCH.
+
+        Prefills the current values from ``state.auto_reload``. Validates both
+        amounts (2dp, within bounds, ``reload_to > threshold``). When auto-reload
+        is already on, offers a "Turn off" path (PATCH ``enabled:false``).
+        """
+        from agent.billing_view import format_money, validate_charge_amount
+
+        if not self._billing_require_admin(state):
+            return
+
+        card = state.card
+        ar = state.auto_reload
+        currently_on = bool(ar and ar.enabled)
+
+        print()
+        _cprint(f"  💳 {_b('Auto-reload')}")
+        print(f"  {'─' * 41}")
+        _cprint(f"  {_d('Automatically buy more credits when your balance is low.')}")
+        if card:
+            print(f"  Card on file: {card.masked}")
+        else:
+            print("  No saved card — set one up on the portal first.")
+            self._billing_portal_hint(state)
+            return
+        if currently_on:
+            print(
+                f"  Currently: below {format_money(ar.threshold_usd)} → "
+                f"reload to {format_money(ar.reload_to_usd)}"
+            )
+
+        if not getattr(self, "_app", None):
+            print("  Run in the interactive CLI to configure auto-reload.")
+            self._billing_portal_hint(state)
+            return
+
+        # When already enabled, let the user turn it off without re-entering values.
+        if currently_on:
+            top_choices = [
+                ("edit", "Edit thresholds", "change when / how much to reload"),
+                ("off", "Turn off", "disable auto-reload"),
+                ("cancel", "Cancel", "do nothing"),
+            ]
+            raw = self._prompt_text_input_modal(
+                title="💳 Auto-reload",
+                detail=(
+                    f"On — below {format_money(ar.threshold_usd)} → "
+                    f"reload to {format_money(ar.reload_to_usd)}"
+                ),
+                choices=top_choices,
+            )
+            top = self._normalize_slash_confirm_choice(raw, top_choices)
+            if top == "off":
+                self._billing_auto_reload_disable(state)
+                return
+            if top != "edit":
+                print("  🟡 Cancelled.")
+                return
+
+        # Field 1 — threshold (prefilled when editing an existing config).
+        cur_thr = format_money(ar.threshold_usd) if currently_on else None
+        thr_prompt = "  When balance falls below (USD)"
+        thr_prompt += f" [{cur_thr}]: " if cur_thr else ": "
+        threshold_raw = self._prompt_text_input(thr_prompt)
+        if threshold_raw is None:
+            # None = cancelled (e.g. slash-worker can't prompt off-thread).
+            print("  🟡 Cancelled.")
+            return
+        if not (threshold_raw or "").strip() and currently_on:
+            threshold_amt = ar.threshold_usd  # keep current value on empty input
+        else:
+            tv = validate_charge_amount(
+                threshold_raw or "", min_usd=state.min_usd, max_usd=state.max_usd
+            )
+            if not tv.ok or tv.amount is None:
+                print(f"  🔴 {tv.error}")
+                return
+            threshold_amt = tv.amount
+
+        # Field 2 — reload-to (prefilled when editing an existing config).
+        cur_rel = format_money(ar.reload_to_usd) if currently_on else None
+        rel_prompt = "  Reload balance to (USD)"
+        rel_prompt += f" [{cur_rel}]: " if cur_rel else ": "
+        reload_raw = self._prompt_text_input(rel_prompt)
+        if reload_raw is None:
+            print("  🟡 Cancelled.")
+            return
+        if not (reload_raw or "").strip() and currently_on:
+            reload_amt = ar.reload_to_usd  # keep current value on empty input
+        else:
+            rv = validate_charge_amount(
+                reload_raw or "", min_usd=state.min_usd, max_usd=state.max_usd
+            )
+            if not rv.ok or rv.amount is None:
+                print(f"  🔴 {rv.error}")
+                return
+            reload_amt = rv.amount
+
+        if reload_amt is None or threshold_amt is None or reload_amt <= threshold_amt:
+            print("  🔴 Reload-to amount must be greater than the threshold.")
+            return
+
+        print()
+        _ar_consent = (
+            f"By confirming, you authorize Nous Research to charge {card.masked} "
+            f"whenever your balance reaches {format_money(threshold_amt)}. "
+            f"Turn off any time here or on the portal."
+        )
+        _cprint(f"  {_d(_ar_consent)}")
+        confirm_choices = [
+            ("agree", "Agree and turn on", "enable auto-reload"),
+            ("cancel", "Cancel", "do nothing"),
+        ]
+        raw = self._prompt_text_input_modal(
+            title="💳 Turn on auto-reload?",
+            detail=f"Below {format_money(threshold_amt)} → reload to {format_money(reload_amt)}",
+            choices=confirm_choices,
+        )
+        choice = self._normalize_slash_confirm_choice(raw, confirm_choices)
+        if choice != "agree":
+            print("  🟡 Cancelled.")
+            return
+
+        from hermes_cli.nous_billing import (
+            BillingError,
+            BillingScopeRequired,
+            patch_auto_top_up,
+        )
+
+        try:
+            patch_auto_top_up(
+                enabled=True, threshold=float(threshold_amt), top_up_amount=float(reload_amt)
+            )
+        except BillingScopeRequired:
+            self._billing_handle_scope_required(state)
+            return
+        except BillingError as exc:
+            self._billing_render_charge_error(state, exc)
+            return
+        print(f"  ✅ Auto-reload on: below {format_money(threshold_amt)} → "
+              f"reload to {format_money(reload_amt)}.")
+
+    def _billing_auto_reload_disable(self, state):
+        """Turn off auto-reload (PATCH ``enabled:false``).
+
+        The endpoint requires ``threshold``/``topUpAmount`` in the body even when
+        disabling, so we echo back the current values (falling back to 0).
+        """
+        from hermes_cli.nous_billing import (
+            BillingError,
+            BillingScopeRequired,
+            patch_auto_top_up,
+        )
+
+        ar = state.auto_reload
+        thr = float(ar.threshold_usd) if ar and ar.threshold_usd is not None else 0.0
+        rel = float(ar.reload_to_usd) if ar and ar.reload_to_usd is not None else 0.0
+        try:
+            patch_auto_top_up(enabled=False, threshold=thr, top_up_amount=rel)
+        except BillingScopeRequired:
+            self._billing_handle_scope_required(state)
+            return
+        except BillingError as exc:
+            self._billing_render_charge_error(state, exc)
+            return
+        print("  ✅ Auto-reload turned off.")
+
+    def _billing_limit_screen(self, state):
+        """Screen 5 — monthly spend limit (read-only; cap is portal-only)."""
+        from agent.billing_view import format_money
+
+        print()
+        _cprint(f"  💳 {_b('Monthly spend limit')}")
+        print(f"  {'─' * 41}")
+        cap = state.monthly_cap
+        if cap is None or cap.limit_usd is None:
+            _cprint(f"  {_d('No monthly cap visible (managed on the portal).')}")
+        else:
+            spent = format_money(cap.spent_this_month_usd)
+            limit = format_money(cap.limit_usd)
+            ceiling = " (default ceiling)" if cap.is_default_ceiling else ""
+            print(f"  {spent} of {limit} used this month{ceiling}")
+        _limit_note = (
+            "The monthly limit is set on the portal — the terminal shows "
+            "it read-only."
+        )
+        _cprint(f"  {_d(_limit_note)}")
+        self._billing_portal_hint(state)
 
     def _show_insights(self, command: str = "/insights"):
         """Show usage insights and analytics from session history."""
@@ -13073,11 +14149,9 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             target=self._reload_mcp, daemon=True
         )
         _reload_thread.start()
-        # Do NOT join here — process_loop calls this from its idle branch, so a
-        # blocking join would freeze input consumption for up to 30s (and a hung
-        # MCP server could block far longer). The reload runs purely in the
-        # background daemon thread, which reports its own progress/completion
-        # status via print() inside _reload_mcp().
+        _reload_thread.join(timeout=30)
+        if _reload_thread.is_alive():
+            print("  ⚠️  MCP reload timed out (30s). Some servers may not have reconnected.")
 
     # Inline-skip tokens that bypass the destructive-slash confirmation modal.
     # A general escape hatch for non-interactive use (scripting/automation) and
@@ -13718,16 +14792,8 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         except Exception:
             pass
 
-        # Recorder creation can fail (no input device, PortAudio init error).
-        # Reset the flag on failure or _voice_recording stays True forever and
-        # every future voice start is silently skipped by the guard above.
         if self._voice_recorder is None:
-            try:
-                self._voice_recorder = create_audio_recorder()
-            except Exception:
-                with self._voice_lock:
-                    self._voice_recording = False
-                raise
+            self._voice_recorder = create_audio_recorder()
 
         # Apply config-driven silence params (numeric-guarded so YAML
         # scalar corruption doesn't break recording start-up).
@@ -15629,27 +16695,14 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                         if interrupt_msg:
                             # If clarify is active, the Enter handler routes
                             # input directly; this queue shouldn't have anything.
-                            # But if it does (race condition), don't interrupt —
-                            # and don't drop the message either: park it in
-                            # _pending_input so it runs as the next turn.
+                            # But if it does (race condition), don't interrupt.
                             if self._clarify_state or self._clarify_freetext:
-                                try:
-                                    self._pending_input.put(interrupt_msg)
-                                except Exception:
-                                    pass
-                                interrupt_msg = None
                                 continue
                             print("\n⚡ New message detected, interrupting...")
                             # Signal TTS to stop on interrupt
                             if stop_event is not None:
                                 stop_event.set()
                             self.agent.interrupt(interrupt_msg)
-                            # Clear any active overlay states the interrupted agent
-                            # left behind.  approval/clarify/sudo/secret prompts gate
-                            # input (read_only condition + keypress filter) until
-                            # explicitly reset — without this the CLI freezes after
-                            # an interrupt until the prompt's own timeout expires (#14026).
-                            self._clear_active_overlays_for_interrupt()
                             # Debug: log to file (stdout may be devnull from redirect_stdout)
                             try:
                                 _dbg = _hermes_home / "interrupt_debug.log"
@@ -15833,7 +16886,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             # intermediate turn boundaries (tool-calling loops), which caused
             # the reasoning box to re-render after the final response.
             _reasoning_already_shown = getattr(self, '_reasoning_shown_this_turn', False)
-            if self.show_reasoning and result and not _reasoning_already_shown:
+            if result and not _reasoning_already_shown:
                 reasoning = result.get("last_reasoning")
                 if reasoning:
                     w = self._scrollback_box_width()
@@ -16415,6 +17468,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         spinner_widget=None,
         spacer,
         status_bar,
+        status_bar_bottom,
         input_rule_top,
         image_bar,
         input_area,
@@ -16447,6 +17501,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                 image_bar,
                 input_area,
                 input_rule_bot,
+                status_bar_bottom,
                 voice_status_bar,
                 completions_menu,
             ] if item is not None
@@ -16519,29 +17574,6 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             prewarm_picker_cache_async()
         except Exception:
             pass
-
-        # Pre-import the agent runtime off-thread during the same idle window.
-        # The first turn otherwise pays ~1.5s of module imports on the
-        # time-to-first-token critical path: `import run_agent` (~0.9s,
-        # deferred by the lazy AIAgent wrapper above) plus the OpenAI SDK
-        # (~0.6s, deferred until client construction). Python's import lock
-        # makes this safe: if the user submits before the warm finishes, the
-        # main thread simply blocks on the remaining import work instead of
-        # redoing it. Skipped when agent startup is explicitly deferred
-        # (Termux) — that path defers heavy work on purpose.
-        if os.environ.get("HERMES_DEFER_AGENT_STARTUP") != "1":
-            def _prewarm_agent_runtime() -> None:
-                try:
-                    import run_agent  # noqa: F401  (imports model_tools + tool registry)
-                    import openai  # noqa: F401
-                except Exception:
-                    logger.debug("agent runtime pre-import failed", exc_info=True)
-
-            threading.Thread(
-                target=_prewarm_agent_runtime,
-                name="agent-runtime-prewarm",
-                daemon=True,
-            ).start()
 
         # Redaction opt-out warning (#17691): ON by default, loud when off.
         # The redactor snapshots its state at import time so any toggle now
@@ -17457,42 +18489,50 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                 event.app.invalidate()
                 return
 
-            # Cancel slash confirmation prompt (foreground UI, not an
-            # agent-blocking overlay — cancel and stop here).
+            # Cancel sudo prompt
+            if self._sudo_state:
+                self._sudo_state["response_queue"].put("")
+                self._sudo_state = None
+                event.app.invalidate()
+                return
+
+            # Cancel secret prompt
+            if self._secret_state:
+                self._cancel_secret_capture()
+                event.app.current_buffer.reset()
+                event.app.invalidate()
+                return
+
+            # Cancel approval prompt (deny)
+            if self._approval_state:
+                self._approval_state["response_queue"].put("deny")
+                self._approval_state = None
+                event.app.invalidate()
+                return
+
+            # Cancel slash confirmation prompt
             if self._slash_confirm_state:
                 self._submit_slash_confirm_response("cancel")
                 event.app.current_buffer.reset()
                 event.app.invalidate()
                 return
 
-            # Cancel /model picker (foreground UI — cancel and stop here).
+            # Cancel /model picker
             if self._model_picker_state:
                 self._close_model_picker()
                 event.app.current_buffer.reset()
                 event.app.invalidate()
                 return
 
-            # Clear all agent-blocking overlays (approval/clarify/sudo/secret)
-            # in one shot.  We do NOT return after clearing — we fall through so
-            # that if the agent is also running we fire the interrupt on the same
-            # Ctrl+C press.  This fixes the case where a stale/orphaned overlay
-            # (left behind by a previous interrupt) consumes the press without
-            # ever reaching the agent-interrupt branch, leaving the chat frozen
-            # (#14026).
-            _overlay_cleared = bool(
-                self._sudo_state
-                or self._secret_state
-                or self._approval_state
-                or self._clarify_state
-            )
-            if _overlay_cleared:
-                self._clear_active_overlays_for_interrupt()
+            # Cancel clarify prompt
+            if self._clarify_state:
+                self._clarify_state["response_queue"].put(
+                    "The user cancelled. Use your best judgement to proceed."
+                )
+                self._clarify_state = None
+                self._clarify_freetext = False
                 event.app.current_buffer.reset()
                 event.app.invalidate()
-
-            # If we only cleared overlays and the agent is NOT running, stop here
-            # (don't fall through to the interrupt/exit path).
-            if _overlay_cleared and not (self._agent_running and self.agent):
                 return
 
             if self._agent_running and self.agent:
@@ -17549,35 +18589,50 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                 event.app.invalidate()
                 return
 
-            # Cancel slash confirmation prompt (foreground UI — cancel and stop).
+            # Cancel sudo prompt
+            if self._sudo_state:
+                self._sudo_state["response_queue"].put("")
+                self._sudo_state = None
+                event.app.invalidate()
+                return
+
+            # Cancel secret prompt
+            if self._secret_state:
+                self._cancel_secret_capture()
+                event.app.current_buffer.reset()
+                event.app.invalidate()
+                return
+
+            # Cancel approval prompt (deny)
+            if self._approval_state:
+                self._approval_state["response_queue"].put("deny")
+                self._approval_state = None
+                event.app.invalidate()
+                return
+
+            # Cancel slash confirmation prompt
             if self._slash_confirm_state:
                 self._submit_slash_confirm_response("cancel")
                 event.app.current_buffer.reset()
                 event.app.invalidate()
                 return
 
-            # Cancel /model picker (foreground UI — cancel and stop).
+            # Cancel /model picker
             if self._model_picker_state:
                 self._close_model_picker()
                 event.app.current_buffer.reset()
                 event.app.invalidate()
                 return
 
-            # Clear all agent-blocking overlays in one shot, then fall through to
-            # the agent-interrupt branch so a single Ctrl+Q both clears a stale
-            # overlay and interrupts a still-running agent (#14026).
-            _overlay_cleared = bool(
-                self._sudo_state
-                or self._secret_state
-                or self._approval_state
-                or self._clarify_state
-            )
-            if _overlay_cleared:
-                self._clear_active_overlays_for_interrupt()
+            # Cancel clarify prompt
+            if self._clarify_state:
+                self._clarify_state["response_queue"].put(
+                    "The user cancelled. Use your best judgement to proceed."
+                )
+                self._clarify_state = None
+                self._clarify_freetext = False
                 event.app.current_buffer.reset()
                 event.app.invalidate()
-
-            if _overlay_cleared and not (self._agent_running and self.agent):
                 return
 
             if self._agent_running and self.agent:
@@ -18643,6 +19698,18 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             ),
         )
 
+        status_bar_bottom = ConditionalContainer(
+            Window(
+                content=FormattedTextControl(lambda: cli_ref._get_status_bar_fragments_bottom()),
+                height=1,
+                wrap_lines=False,
+            ),
+            filter=Condition(
+                lambda: cli_ref._status_bar_visible
+                and not getattr(cli_ref, "_status_bar_suppressed_after_resize", False)
+            ),
+        )
+
         # Stash browse panel — appears just above the status bar when the user
         # presses Ctrl+S on an empty composer with 2+ stashed drafts.
         def _get_stash_panel_display():
@@ -18687,6 +19754,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                     spinner_widget=spinner_widget,
                     spacer=spacer,
                     status_bar=status_bar,
+                    status_bar_bottom=status_bar_bottom,
                     input_rule_top=input_rule_top,
                     image_bar=image_bar,
                     input_area=input_area,
@@ -18718,6 +19786,7 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
             'status-bar-critical': 'bg:#1a1a2e #FF6B6B bold',
             'status-bar-yolo': 'bg:#1a1a2e #FF4444 bold',
             'status-bar-session-title': 'bg:#FFD700 #1a1a2e bold',
+            'status-bar-reasoning': 'bg:#1a1a2e #6A9FB5 bold',
             # Bronze horizontal rules around the input area
             'input-rule': '#CD7F32',
             # Clipboard image attachment badges
@@ -19064,15 +20133,6 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
                         if self._last_turn_interrupted:
                             self._recover_terminal_after_interrupt()
 
-                        # Re-queue any messages that arrived in _interrupt_queue
-                        # while the agent was running and were never claimed by
-                        # the explicit interrupt path. See
-                        # _drain_interrupt_queue_to_pending_input for the full
-                        # rationale. Regression of #17666 / #18760 — the drain
-                        # block from the original PR #17939 was deferred as
-                        # "worth its own review" and never re-landed (#20271).
-                        self._drain_interrupt_queue_to_pending_input()
-
                         # Goal continuation: if a standing goal is active, ask
                         # the judge whether the turn satisfied it. If not, and
                         # there's no real user message already queued, push the
@@ -19382,15 +20442,6 @@ class HermesCLI(CLIAgentSetupMixin, CLICommandsMixin, CLIBillingMixin):
         finally:
             self._should_exit = True
             self._pet_stop_anim()
-            # Immediate feedback: prompt_toolkit has just torn down the input
-            # box + status bar, so without a line here the terminal sits
-            # silent for the whole cleanup window (session flush, memory
-            # shutdown, MCP/browser/terminal teardown) and the exit looks
-            # hung. Print before any potentially-slow step.
-            try:
-                print(f"{_DIM}Shutting down… (finalizing session){_RST}", flush=True)
-            except Exception:
-                pass
             # Interrupt the agent immediately so its daemon thread stops making
             # API calls and exits promptly (agent_thread is daemon, so the
             # process will exit once the main thread finishes, but interrupting

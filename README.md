@@ -119,6 +119,8 @@ hermes doctor       # Diagnose any issues
 
 📖 **[Full documentation →](https://hermes-agent.nousresearch.com/docs/)**
 
+**Experimental Rust TUI:** `hermes-tui-rust/` contains a standalone native Ratatui/Crossterm TUI that speaks the same `tui_gateway` JSON-RPC protocol as the production Ink TUI. It is useful for TUI experimentation and local testing, but it is not yet exposed through the main `hermes` CLI installer path.
+
 ---
 
 ## Skip the API-key collection — Nous Portal

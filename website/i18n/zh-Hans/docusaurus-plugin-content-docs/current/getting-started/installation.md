@@ -156,10 +156,9 @@ hermes setup --portal
 1. **一次性操作，以具有 sudo 权限的管理员用户身份**，安装 Chromium 所需的系统库：
 
    ```bash
-   sudo npx playwright install-deps chromium
+   sudo uv run --with playwright playwright install-deps chromium
    ```
-
-   （可在任意位置运行——`npx` 会自动获取 Playwright。）
+   （你可以在任何地方运行这个命令——`uv run`会动态获取Playwright。）
 
 2. **以非特权服务用户身份**，运行常规安装程序。它会检测到缺少 sudo，跳过 `--with-deps`，并将 Chromium 安装到用户本地的 Playwright 缓存中：
 

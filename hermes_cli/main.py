@@ -328,7 +328,7 @@ def _wants_tui_early(argv: "list[str] | None" = None) -> bool:
         argv = sys.argv[1:]
     if "--cli" in argv:
         return False
-    if os.environ.get("HERMES_TUI") == "1" or "--tui" in argv:
+    if os.environ.get("HERMES_TUI") == "1" or "--tui" in argv or "--tui-rust" in argv:
         return True
     try:
         if not (sys.stdin.isatty() and sys.stdout.isatty()):
@@ -2630,6 +2630,56 @@ def _resolve_tui_heap_mb(default_mb: int = 8192) -> int:
     return max(1536, sized) if limit_mb > 2048 else sized
 
 
+def _resolve_hermes_python() -> str:
+    """Pick the Python interpreter the spawned TUI gateway should use.
+
+    The gateway (``tui_gateway.entry``) and its workers run as a child of the
+    Node TUI process, which resolves the interpreter via ``HERMES_PYTHON`` /
+    ``PYTHON`` env vars and then the project venv (see ``gatewayClient.ts``).
+    This mirrors that priority but *corrects* for a broken launcher: when
+    ``hermes`` is invoked through a shebang pointing at a system interpreter
+    outside the supported ``requires-python`` range (e.g. system
+    ``/usr/bin/python3`` == 3.14 while the project targets ``<3.14``), using
+    ``sys.executable`` would force the gateway onto an unsupported interpreter
+    and break stdlib-coupled code such as ``DaemonThreadPoolExecutor``.
+
+    Resolution order:
+      1. An active venv (``VIRTUAL_ENV``) — the normal ``pip install`` case.
+      2. ``.venv`` / ``venv`` next to the project root.
+      3. ``sys.executable`` as a last resort.
+
+    We only *prefer* a venv interpreter when it exists and reports a version
+    inside the supported window; otherwise we fall back to ``sys.executable``
+    so we never substitute an interpreter we can't trust.
+    """
+    import subprocess
+
+    def _major_ok(path: str) -> bool:
+        try:
+            out = subprocess.run(
+                [path, "-c", "import sys;print(sys.version_info[:2])"],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if out.returncode != 0:
+                return False
+            major, minor = eval(out.stdout.strip())
+            return (major, minor) < (3, 14)
+        except Exception:
+            return False
+
+    candidates = [
+        os.path.join(os.environ.get("VIRTUAL_ENV", ""), "bin", "python3"),
+        str(PROJECT_ROOT / ".venv" / "bin" / "python3"),
+        str(PROJECT_ROOT / "venv" / "bin" / "python3"),
+    ]
+    for cand in candidates:
+        if cand and os.path.exists(cand) and _major_ok(cand):
+            return cand
+    return sys.executable
+
+
 def _safe_tui_cwd(env: Optional[dict] = None) -> str:
     """Return a stable cwd value for the Node TUI child environment."""
     try:
@@ -2699,6 +2749,11 @@ def _launch_tui(
     )
     os.close(active_session_fd)
     env["HERMES_TUI_ACTIVE_SESSION_FILE"] = active_session_file
+    env["HERMES_PYTHON_SRC_ROOT"] = os.environ.get(
+        "HERMES_PYTHON_SRC_ROOT", str(PROJECT_ROOT)
+    )
+    env.setdefault("HERMES_PYTHON", _resolve_hermes_python())
+    env.setdefault("HERMES_CWD", os.getcwd())
     env.setdefault("NODE_ENV", "development" if tui_dev else "production")
 
     wt_info = None
@@ -2895,7 +2950,7 @@ def _resolve_use_tui(args) -> bool:
     """
     if getattr(args, "cli", False):
         return False
-    if getattr(args, "tui", False):
+    if getattr(args, "tui", False) or getattr(args, "tui_rust", False):
         return True
     try:
         if not (sys.stdin.isatty() and sys.stdout.isatty()):
@@ -2912,6 +2967,102 @@ def _resolve_use_tui(args) -> bool:
     except Exception:
         return False
 
+def _resolve_use_tui_rust(args) -> bool:
+    """Check if the user explicitly requested the Rust-based TUI.
+    
+    Returns True only when --tui-rust was passed, never for --tui or env.
+    """
+    return bool(getattr(args, "tui_rust", False))
+
+
+def _launch_tui_rust(
+    resume_session_id: Optional[str] = None,
+    model: Optional[str] = None,
+    provider: Optional[str] = None,
+    query: Optional[str] = None,
+    worktree: bool = False,
+):
+    """Launch the Rust-based TUI binary."""
+    rust_tui_dir = PROJECT_ROOT / "hermes-tui-rust"
+    rust_binary = rust_tui_dir / "target" / "release" / "hermes-tui-rust"
+    
+    # Fall back to debug build
+    if not rust_binary.exists():
+        rust_binary = rust_tui_dir / "target" / "debug" / "hermes-tui-rust"
+    
+    if not rust_binary.exists():
+        print(
+            "Rust TUI binary not found. Build it first with:\n"
+            f"  cd {rust_tui_dir} && cargo build --release\n",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    
+    env = os.environ.copy()
+    try:
+        from hermes_cli.config import apply_terminal_config_to_env
+        apply_terminal_config_to_env(env=env)
+    except Exception:
+        logger.debug("Failed to apply terminal config bridge for Rust TUI launch", exc_info=True)
+    
+    # Set PYTHONPATH so the spawned gateway child can find tui_gateway.entry
+    env.setdefault("PYTHONPATH", "")
+    env["PYTHONPATH"] = f"{PROJECT_ROOT}:{env['PYTHONPATH']}".strip(":")
+    
+    env["HERMES_PYTHON_SRC_ROOT"] = os.environ.get(
+        "HERMES_PYTHON_SRC_ROOT", str(PROJECT_ROOT)
+    )
+
+    env.setdefault("HERMES_PYTHON", _resolve_hermes_python())
+    env.setdefault("HERMES_CWD", os.getcwd())
+    
+    if model:
+        env["HERMES_MODEL"] = model
+        env["HERMES_INFERENCE_MODEL"] = model
+    if provider:
+        env["HERMES_INFERENCE_PROVIDER"] = provider
+    if query:
+        env["HERMES_TUI_QUERY"] = query
+    
+    wt_info = None
+    if worktree:
+        try:
+            from cli import (
+                _cleanup_worktree,
+                _git_repo_root,
+                _prune_stale_worktrees,
+                _setup_worktree,
+            )
+            repo = _git_repo_root()
+            if repo:
+                _prune_stale_worktrees(repo)
+            wt_info = _setup_worktree()
+        except Exception as exc:
+            print(f"✗ Failed to create worktree: {exc}", file=sys.stderr)
+            wt_info = None
+        if not wt_info:
+            sys.exit(1)
+        env["HERMES_CWD"] = wt_info["path"]
+        env["TERMINAL_CWD"] = wt_info["path"]
+    
+    env.pop("HERMES_TUI_RESUME", None)
+    if resume_session_id:
+        env["HERMES_TUI_RESUME"] = resume_session_id
+    
+    code: Optional[int] = None
+    try:
+        try:
+            code = subprocess.call([str(rust_binary)], cwd=str(rust_tui_dir), env=env)
+        except KeyboardInterrupt:
+            code = 130
+    finally:
+        if wt_info:
+            try:
+                _cleanup_worktree(wt_info)
+            except Exception:
+                pass
+    
+    sys.exit(code if code is not None else 1)
 
 def cmd_chat(args):
     """Run interactive chat CLI."""
@@ -3144,6 +3295,18 @@ def cmd_chat(args):
     _confirm_startup_expensive_model_override(args)
 
     if use_tui:
+        # --tui-rust: launch the Rust-based TUI binary
+        if _resolve_use_tui_rust(args):
+            _launch_tui_rust(
+                resume_session_id=getattr(args, "resume", None),
+                model=getattr(args, "model", None),
+                provider=getattr(args, "provider", None),
+                query=getattr(args, "query", None),
+                worktree=getattr(args, "worktree", False),
+            )
+            return  # _launch_tui_rust calls sys.exit internally
+        
+        # Default: launch the TypeScript/Ink TUI
         _launch_tui(
             getattr(args, "resume", None),
             tui_dev=getattr(args, "tui_dev", False),
@@ -3161,6 +3324,7 @@ def cmd_chat(args):
             max_turns=getattr(args, "max_turns", None),
             accept_hooks=getattr(args, "accept_hooks", False),
         )
+        return
 
     # Import and run the CLI
     from cli import main as cli_main
