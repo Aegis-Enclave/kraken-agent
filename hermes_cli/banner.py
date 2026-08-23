@@ -406,8 +406,8 @@ def check_for_updates() -> Optional[int]:
     # `/api/hermes/update/check` endpoint short-circuits docker the same way
     # (web_server.py); mirror that here so the banner/TUI surfaces agree.
     try:
-        from hermes_cli.config import detect_install_method
-        if detect_install_method() == "docker":
+        from hermes_cli.config import detect_install_method, get_project_root
+        if detect_install_method(get_project_root()) in {"docker", "apt"}:
             return None
     except Exception:
         pass
