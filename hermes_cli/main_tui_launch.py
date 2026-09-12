@@ -821,6 +821,88 @@ def _launch_tui(
     sys.exit(code)
 
 
+def _launch_tui_rust(
+    resume_session_id: Optional[str] = None,
+    model: Optional[str] = None,
+    provider: Optional[str] = None,
+    query: Optional[str] = None,
+    worktree: bool = False,
+):
+    """Launch the experimental Rust TUI binary (hermes-tui-rust/).
+
+    The Rust binary spawns ``python3 -m tui_gateway.entry`` itself (see
+    ``hermes-tui-rust/src/app.rs::connect_gateway``), so this launcher only has
+    to locate the compiled binary, seed the child env, and hand over. It shares
+    the Ink TUI's env contract: terminal-config bridge, ``HERMES_PYTHON`` for the
+    gateway child, and worktree support. Unlike the Ink TUI it needs no Node env.
+    """
+    from hermes_cli.main import PROJECT_ROOT
+
+    rust_tui_dir = PROJECT_ROOT / "hermes-tui-rust"
+    rust_binary = rust_tui_dir / "target" / "release" / "hermes-tui-rust"
+    if not rust_binary.exists():
+        rust_binary = rust_tui_dir / "target" / "debug" / "hermes-tui-rust"
+    if not rust_binary.exists():
+        print(
+            "Rust TUI binary not found. Build it first with:\n"
+            f"  cd {rust_tui_dir} && cargo build --release\n",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    # Seed the child env the same way the Ink TUI does: propagate the
+    # profile-home contract, keep secrets, and apply the terminal-config bridge.
+    from tools.environments.local import build_subprocess_env
+    env = build_subprocess_env(scrub_secrets=False, inherit_profile_home=True)
+    try:
+        from hermes_cli.config import apply_terminal_config_to_env
+        apply_terminal_config_to_env(env=env)
+    except Exception:
+        logger.debug("Failed to apply terminal config bridge for Rust TUI launch", exc_info=True)
+
+    env.setdefault("PYTHONPATH", "")
+    env["PYTHONPATH"] = f"{PROJECT_ROOT}:{env['PYTHONPATH']}".strip(":")
+    env["HERMES_PYTHON_SRC_ROOT"] = os.environ.get(
+        "HERMES_PYTHON_SRC_ROOT", str(PROJECT_ROOT)
+    )
+    _apply_tui_python_env(env)
+
+    # The Rust binary reads HERMES_PYTHON to spawn its gateway child; the model /
+    # provider / query overrides are surfaced through the same env vars the Ink
+    # gateway already honors.
+    if model:
+        env["HERMES_MODEL"] = model
+        env["HERMES_INFERENCE_MODEL"] = model
+    if provider:
+        env["HERMES_INFERENCE_PROVIDER"] = provider
+    if query:
+        env["HERMES_TUI_QUERY"] = query
+
+    env.pop("HERMES_TUI_RESUME", None)
+    if resume_session_id:
+        env["HERMES_TUI_RESUME"] = resume_session_id
+
+    wt_info = None
+    if worktree:
+        wt_info = _setup_tui_worktree()
+        env["HERMES_CWD"] = wt_info["path"]
+        env["TERMINAL_CWD"] = wt_info["path"]
+
+    code: Optional[int] = None
+    try:
+        try:
+            code = subprocess.call([str(rust_binary)], cwd=str(rust_tui_dir), env=env)
+        except KeyboardInterrupt:
+            code = 130
+    finally:
+        if wt_info:
+            with contextlib.suppress(Exception):
+                from cli import _cleanup_worktree
+                _cleanup_worktree(wt_info)
+
+    sys.exit(code if code is not None else 1)
+
+
 def _pin_kanban_board_env() -> None:
     """Pin the active kanban board into ``HERMES_KANBAN_BOARD`` so in-process tools and shelled-out
     ``hermes kanban`` calls agree even if a concurrent ``boards switch`` flips the file mid-turn.
@@ -857,6 +939,9 @@ def _resolve_use_tui(args) -> bool:
     if getattr(args, "cli", False):
         return False
     if getattr(args, "tui", False):
+        return True
+    # --tui-rust is an alternate TUI frontend, not the classic REPL.
+    if getattr(args, "tui_rust", False):
         return True
     try:
         if not (sys.stdin.isatty() and sys.stdout.isatty()):

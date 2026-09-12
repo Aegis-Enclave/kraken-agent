@@ -174,6 +174,8 @@ def _add_top_level_flags(parser: argparse.ArgumentParser) -> None:
               help="Force the classic prompt_toolkit REPL (overrides display.interface=tui)")
     inherited(parser, "--dev", dest="tui_dev", action="store_true", default=False,
               help="With --tui: run TypeScript sources via tsx (skip dist build)")
+    inherited(parser, "--tui-rust", action="store_true", default=False,
+              help="Launch the experimental Rust TUI instead of the Ink TUI")
 
 
 def _build_chat_parser(subparsers) -> argparse.ArgumentParser:
@@ -274,6 +276,8 @@ def _build_chat_parser(subparsers) -> argparse.ArgumentParser:
               help="Force the classic prompt_toolkit REPL (overrides display.interface=tui)")
     inherited(chat_parser, "--dev", dest="tui_dev", action="store_true", default=SUPPRESS,
               help="With --tui: run TypeScript sources via tsx (skip dist build)")
+    inherited(chat_parser, "--tui-rust", action="store_true", default=SUPPRESS,
+              help="Launch the experimental Rust TUI instead of the Ink TUI")
     return chat_parser
 
 

@@ -264,7 +264,7 @@ def _wants_tui_early(argv: "list[str] | None" = None) -> bool:
         argv = sys.argv[1:]
     if "--cli" in argv:
         return False
-    if os.environ.get("HERMES_TUI") == "1" or "--tui" in argv:
+    if os.environ.get("HERMES_TUI") == "1" or "--tui" in argv or "--tui-rust" in argv:
         return True
     try:
         if not (sys.stdin.isatty() and sys.stdout.isatty()):
@@ -771,6 +771,7 @@ from hermes_cli.main_web_build import (  # frozen updater surface: update_cmd*.p
 )
 from hermes_cli.main_tui_launch import (
     _launch_tui,
+    _launch_tui_rust,
     _pin_kanban_board_env,
     _resolve_use_tui,
     _sync_bundled_skills_quietly,
@@ -1722,6 +1723,15 @@ def cmd_chat(args):
 
     passthrough = {k: getattr(args, k, d) for k, d in _CHAT_PASSTHROUGH}
     if use_tui:
+        if getattr(args, "tui_rust", False):
+            _launch_tui_rust(
+                resume_session_id=getattr(args, "resume", None),
+                model=getattr(args, "model", None),
+                provider=getattr(args, "provider", None),
+                query=getattr(args, "query", None),
+                worktree=getattr(args, "worktree", False),
+            )
+            return  # _launch_tui_rust calls sys.exit internally
         _launch_tui(
             passthrough.pop("resume"),
             tui_dev=getattr(args, "tui_dev", False),
@@ -2720,7 +2730,7 @@ _AGENT_SUBCOMMANDS = {
 
 
 def _is_tui_chat_launch(args) -> bool:
-    if getattr(args, "tui", False) or os.environ.get("HERMES_TUI") == "1":
+    if getattr(args, "tui", False) or getattr(args, "tui_rust", False) or os.environ.get("HERMES_TUI") == "1":
         return True
     # The chat path decides TUI-vs-classic via _resolve_use_tui (--cli/--tui
     # flags, TTY gate, HERMES_TUI env, display.interface config). Bare

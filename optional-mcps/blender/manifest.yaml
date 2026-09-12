@@ -1,0 +1,48 @@
+# Nous-approved MCP catalog entry.
+# Presence in this directory = approval. Merged via PR review.
+manifest_version: 1
+
+name: blender
+description: Drive a live Blender session — modeling, scenes, and renders.
+source: https://github.com/ahujasid/blender-mcp
+
+# ahujasid/blender-mcp (MIT, PyPI: blender-mcp) is the de-facto standard
+# Blender MCP. It is a bridge with two halves:
+#   1. This stdio server (uvx blender-mcp), which Hermes launches.
+#   2. An addon (addon.py) running inside Blender that opens a local command
+#      socket on 127.0.0.1:9876. The stdio server relays to it.
+# There is nothing to git-clone on the Hermes side — uvx resolves the package —
+# so no install block. The in-Blender addon setup is covered in post_install.
+#
+# Why not Blender's official MCP (blender.org/lab): it requires Blender 5.1+
+# and targets scene analysis/documentation rather than asset creation. This
+# server works across Blender 3.x/4.x and exposes full modeling control.
+transport:
+  type: stdio
+  command: "uvx"
+  # Pinned per catalog dependency policy: exact version, and the release must
+  # be at least 2 weeks old at pin time (supply-chain cooldown — same rule as
+  # pyproject.toml dependencies). 1.6.4 released 2026-06-11. The catalog never
+  # auto-updates; bumping the pin is a PR to this manifest.
+  #
+  # --with mcp<2.0.0: blender-mcp 1.6.4 imports `mcp.server.fastmcp`, which
+  # mcp 2.x removed. Resolving the SDK to >=2.0 breaks the bridge at import
+  # on startup. Pin the runtime SDK to <2.0.0 so uv resolves a compatible
+  # SDK. Revisit when blender-mcp ships a 2.x-compatible release.
+  args:
+    - "--with=mcp<2.0.0"
+    - "blender-mcp==1.6.4"
+  version: "1.6.4"
+  env:
+    # Upstream ships anonymous telemetry, on by default. Hermes policy is
+    # no outbound telemetry without explicit opt-in, so the catalog entry
+    # disables it. Remove this line only if you deliberately want it on.
+    DISABLE_TELEMETRY: "true"
+
+post_install: |
+  Install the Blender addon:
+  1. Download addon.py from https://github.com/ahujasid/blender-mcp.
+  2. In Blender: Edit > Preferences > Add-ons > Install, select addon.py.
+  3. Enable "Blender MCP" and run the server from the addon panel; it opens
+     a local socket on 127.0.0.1:9876.
+  Then `hermes mcp add blender` (or enable it in `hermes mcp`).

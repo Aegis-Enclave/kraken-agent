@@ -225,3 +225,6 @@ native/fts5_cjk/*.so
 
 # Disposable profile created by scripts/probe_active_session_exclusivity.py
 .probe-home/
+
+# Local Empryo agent state (memory/genome/session DBs) — never part of the repo.
+.empryo

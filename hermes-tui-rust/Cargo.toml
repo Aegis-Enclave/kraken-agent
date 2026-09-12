@@ -1,0 +1,94 @@
+[package]
+name = "hermes-tui-rust"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+authors = ["Hermes Agent <vibe@mistral.ai>"]
+description = "Rust-based TUI for Hermes Agent with oh-my-pi inspired features"
+license = "MIT"
+readme = "README.md"
+homepage = "https://github.com/NousResearch/hermes-agent"
+repository = "https://github.com/NousResearch/hermes-agent"
+keywords = ["tui", "terminal", "ai", "agent", "hermes"]
+categories = ["command-line-utilities", "development-tools"]
+
+[dependencies]
+# TUI Framework (stable, well-maintained)
+ratatui = { version = "0.28", features = ["all-widgets", "crossterm"] }
+crossterm = { version = "0.28", features = ["event-stream"] }
+tui-textarea = "0.6"  # Multi-line text input
+
+# JSON parsing
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Async runtime
+tokio = { version = "1", features = ["full"] }
+
+# Logging
+log = "0.4"
+env_logger = "0.10"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+# CLI argument parsing
+clap = { version = "4.0", features = ["derive"] }
+
+# Utilities
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1.0", features = ["v4", "serde"] }
+url = "2.0"
+base64 = "0.22"
+home = "0.5"  # For config directory detection
+
+# For syntax highlighting in code blocks
+syntect = { version = "5.0", default-features = false, features = ["default-fancy"] }
+
+# For fuzzy matching in completions
+
+# For better text wrapping
+
+# Markdown parsing for chat rendering
+pulldown-cmark = "0.12"
+
+# Image loading and SIXEL encoding for terminal graphics
+image = "0.25"
+icy_sixel = "0.5"
+unicode-width = "0.1"
+
+# For clipboard support (optional)
+arboard = { version = "3.0", optional = true }
+sysinfo = "0.31.0"
+
+[features]
+default = ["clipboard-support"]
+clipboard-support = ["arboard"]
+
+[profile.release]
+opt-level = 2
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[profile.release-with-debug]
+inherits = "release"
+debug = true
+strip = false
+
+[profile.dev]
+opt-level = 0
+debug = true
+
+[[bin]]
+name = "hermes-tui-rust"
+path = "src/main.rs"
+
+[build-dependencies]
+# For embedding version info
+built = { version = "0.6", features = ["chrono", "git2"] }
+
+[dev-dependencies]
+syn = "2.0.117"
