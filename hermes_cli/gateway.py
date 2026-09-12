@@ -1477,6 +1477,23 @@ def _print_gateway_process_mismatch(snapshot: GatewayRuntimeSnapshot) -> None:
         print("  can refuse to start another copy until this process stops.")
 
 
+def _print_served_ingress_urls(profile: str | None = None) -> None:
+    """Callback URLs of inbound-port platforms the live multiplexer serves for secondary profiles
+    (the value to paste into the Twilio / LINE / Teams / BlueBubbles console)."""
+    try:
+        from hermes_cli.gateway_multiplex_served import format_ingress_url_lines, served_profile_ingress_urls
+        urls = served_profile_ingress_urls(profile)
+    except Exception:
+        return
+    if not urls:
+        return
+    print()
+    print("Inbound callback URLs on the shared listener:")
+    for name, per_platform in sorted(urls.items()):
+        for line in format_ingress_url_lines(per_platform, indent=f"  {name}/" if not profile else "  "):
+            print(line)
+
+
 def _print_other_profiles_gateway_status() -> None:
     """Print other profiles' running gateways at the bottom of ``hermes gateway status``."""
     try:
@@ -3217,9 +3234,12 @@ def systemd_install(
         else:
             print(f"Service already installed at: {unit_path}")
             print("Use --force to reinstall")
+        # Same post-install guarantee as a fresh install: a repaired user unit must survive logout too.
         configured_user = _read_systemd_user_from_unit(unit_path) if system else None
         if configured_user:
             _ensure_system_service_linger(configured_user)
+        elif not system:
+            _ensure_linger_enabled()
         return
 
     unit_path.parent.mkdir(parents=True, exist_ok=True)
@@ -4016,6 +4036,7 @@ def refresh_launchd_plist_if_needed() -> bool:
             "launchd reload of %s failed — service not registered after %ds of retries; see %s",
             target, int(_reload_budget), _launchd_reload_log_path(),
         )
+        return False
     print("↻ Updated gateway launchd service definition to match the current Hermes install")
     return True
 
@@ -4026,8 +4047,17 @@ def launchd_install(force: bool = False):
     if plist_path.exists() and not force:
         if not launchd_plist_is_current():
             print(f"↻ Repairing outdated launchd service at: {plist_path}")
-            refresh_launchd_plist_if_needed()
-            print("✓ Service definition updated")
+            if refresh_launchd_plist_if_needed():
+                print("✓ Service definition updated")
+            else:
+                # The plist was rewritten but launchd never registered it (or the write was refused):
+                # a success line here would hide an unloaded service with no KeepAlive.
+                from hermes_constants import display_hermes_home
+                print(
+                    "⚠ Service definition could not be reloaded with launchd. "
+                    "Run 'hermes gateway install --force' or check "
+                    f"{display_hermes_home()}/logs/launchd-reload.log for details."
+                )
             return
         print(f"Service already installed at: {plist_path}")
         print("Use --force to reinstall")
@@ -4713,7 +4743,7 @@ def run_gateway(verbose: int = 0, quiet: bool = False, replace: bool = False, fo
 
     from gateway.run import start_gateway
     print("┌─────────────────────────────────────────────────────────┐")
-    print("│           ⚕ Hermes Gateway Starting...                 │")
+    print("│           ☤ Hermes Gateway Starting...                 │")
     print("├─────────────────────────────────────────────────────────┤")
     print("│  Messaging platforms + cron scheduler                    │")
     print("│  Press Ctrl+C to stop                                   │")
@@ -5620,7 +5650,7 @@ def _setup_service_action(
 
 _WIZARD_BANNER = (
     "┌─────────────────────────────────────────────────────────┐",
-    "│             ⚕ Gateway Setup                            │",
+    "│             ☤ Gateway Setup                            │",
     "├─────────────────────────────────────────────────────────┤",
     "│  Configure messaging platforms and the gateway service. │",
     "│  Press Ctrl+C at any time to exit.                     │",
@@ -6295,12 +6325,14 @@ def _cmd_status(args):
     full = getattr(args, "full", False)
     system = getattr(args, "system", False)
     snapshot = get_gateway_runtime_snapshot(system=system)
+    from hermes_cli.profiles import get_active_profile_name
 
     _windows_service_installed = is_windows() and _gw_windows().is_installed()
     if not snapshot.running and named_profile_served_by_running_multiplexer():
         # Satellite profile: the default multiplexer is the live inbound process for it.
         print("✓ Gateway is running via the default-profile multiplexer")
         print("  Manage it from the default profile: hermes gateway status")
+        _print_served_ingress_urls(get_active_profile_name())
     elif (kind := _installed_service_kind_for(lambda: _windows_service_installed)) is not None:
         if kind == "systemd":
             systemd_status(deep, system=system, full=full)
@@ -6309,12 +6341,14 @@ def _cmd_status(args):
         else:
             _gw_windows().status(deep=deep)
         _print_gateway_process_mismatch(snapshot)
+        _print_served_ingress_urls()
     else:
         pids = list(snapshot.gateway_pids)
         if pids:
             print(f"✓ Gateway is running (PID: {', '.join(map(str, pids))})")
             print("  (Running manually, not as a system service)")
             _print_runtime_health()
+            _print_served_ingress_urls()
             print()
             _print_lines(*_STATUS_RUNNING_HINTS[_status_host_kind()])
         else:
@@ -6342,10 +6376,15 @@ def _cmd_migrate_legacy(args):
     remove_legacy_hermes_units(interactive=not yes, dry_run=dry_run)
 
 
+def _cmd_migrate(args):
+    from hermes_cli.gateway_migrate import cmd_migrate
+    cmd_migrate(args)
+
+
 _GATEWAY_SUBCOMMANDS = {
     None: _cmd_run, "run": _cmd_run, "setup": _cmd_setup, "install": _cmd_install,
     "uninstall": _cmd_uninstall, "start": _cmd_start, "stop": _cmd_stop, "restart": _cmd_restart,
-    "status": _cmd_status, "list": _cmd_list, "migrate-legacy": _cmd_migrate_legacy,
+    "status": _cmd_status, "list": _cmd_list, "migrate-legacy": _cmd_migrate_legacy, "migrate": _cmd_migrate,
 }
 
 
